@@ -666,6 +666,15 @@ def handle_recording_status():
     print(f"Recording {recording_sid} status: {status}")
     return "OK", 200
 
+@app.route('/test/version', methods=['GET'])
+def test_version():
+    """Test endpoint to verify deployment version"""
+    return jsonify({
+        'version': '2025-09-13-v4',
+        'message': 'Latest code deployed successfully',
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')
+    })
+
 @app.route('/test/aws', methods=['GET'])
 def test_aws_connection():
     """Test endpoint to verify AWS S3 connection"""
