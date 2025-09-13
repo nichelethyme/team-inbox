@@ -532,7 +532,7 @@ def handle_incoming_call():
         maxLength="300"
         playBeep="true"
         recordingStatusCallback="/twilio/recording-status"
-        timeout="10"
+        timeout="30"
         finishOnKey="1"
     />
 </Response>'''
@@ -550,6 +550,13 @@ def handle_recording():
         recording_sid = request.values.get('RecordingSid', '')
         call_sid = request.values.get('CallSid', '')
         from_number = request.values.get('From', '')
+        recording_duration = request.values.get('RecordingDuration', '0')
+
+        print(f"🎤 Recording details:")
+        print(f"  - URL: {recording_url}")
+        print(f"  - SID: {recording_sid}")
+        print(f"  - Duration: {recording_duration} seconds")
+        print(f"  - From: {from_number}")
 
         if recording_url and recording_sid:
             filename = f"call_recording_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
