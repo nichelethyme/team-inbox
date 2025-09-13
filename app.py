@@ -558,6 +558,32 @@ def handle_recording():
         print(f"  - Duration: {recording_duration} seconds")
         print(f"  - From: {from_number}")
 
+        # Handle case where recording was too short or silent
+        if not recording_url:
+            print("⚠️  No recording URL - recording may have been too short or silent")
+
+            # Still save a record in the inbox for tracking
+            sender_name = detect_sender_name(from_number)
+            date_folder = datetime.now().strftime('%Y-%m-%d')
+            title = f"{sender_name} - No Recording ({datetime.now().strftime('%H:%M')})"
+
+            conn = sqlite3.connect('songs.db')
+            c = conn.cursor()
+            c.execute("""INSERT INTO inbox
+                         (sender_name, sender_phone, content_type, title, content, s3_url, date_folder)
+                         VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                      (sender_name, from_number, 'voice', title, f"Call received but no recording captured (duration: {recording_duration}s)", None, date_folder))
+            conn.commit()
+            conn.close()
+
+            # Return helpful TwiML
+            helpful_response = '''<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Recording was too short. Please call back and speak for at least 3 seconds after the beep, then press 1. Goodbye.</Say>
+    <Hangup/>
+</Response>'''
+            return helpful_response, 200, {'Content-Type': 'application/xml'}
+
         if recording_url and recording_sid:
             filename = f"call_recording_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
 
@@ -619,6 +645,48 @@ def handle_recording_status():
 
     print(f"Recording {recording_sid} status: {status}")
     return "OK", 200
+
+@app.route('/test/aws', methods=['GET'])
+def test_aws_connection():
+    """Test endpoint to verify AWS S3 connection"""
+    try:
+        aws_access_key = os.environ.get('AWS_ACCESS_KEY_ID')
+        aws_secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
+        aws_bucket = os.environ.get('AWS_BUCKET_NAME')
+        aws_region = os.environ.get('AWS_REGION', 'us-east-1')
+
+        if not all([aws_access_key, aws_secret_key, aws_bucket]):
+            return jsonify({
+                'success': False,
+                'error': 'Missing AWS credentials',
+                'has_access_key': bool(aws_access_key),
+                'has_secret_key': bool(aws_secret_key),
+                'has_bucket': bool(aws_bucket)
+            })
+
+        # Test S3 connection
+        s3_client = boto3.client(
+            's3',
+            aws_access_key_id=aws_access_key,
+            aws_secret_access_key=aws_secret_key,
+            region_name=aws_region
+        )
+
+        # Try to list bucket (this tests basic connectivity)
+        response = s3_client.head_bucket(Bucket=aws_bucket)
+
+        return jsonify({
+            'success': True,
+            'message': 'AWS S3 connection successful',
+            'bucket': aws_bucket,
+            'region': aws_region
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
 
 @app.route('/twilio/menu', methods=['POST'])
 def handle_menu():
