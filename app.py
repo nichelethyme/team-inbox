@@ -535,6 +535,10 @@ def handle_incoming_call():
         timeout="30"
         finishOnKey="1"
     />
+    <Say voice="alice">Processing your recording, please wait...</Say>
+    <Pause length="3"/>
+    <Say voice="alice">I didn't get your recording. Please call back and try again. Goodbye!</Say>
+    <Hangup/>
 </Response>'''
     
     return twiml_response, 200, {'Content-Type': 'application/xml'}
