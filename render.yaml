@@ -19,7 +19,7 @@ services:
       - key: AWS_SECRET_ACCESS_KEY
         sync: false
       - key: AWS_BUCKET_NAME
-        value: ladyembersongs-recordings
+        value: ladyembertest1
       - key: AWS_REGION
         value: us-east-1
       - key: TWILIO_ACCOUNT_SID

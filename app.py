@@ -424,7 +424,7 @@ def debug_song(song_id):
 # Twilio Configuration
 TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
-AWS_BUCKET_NAME = os.environ.get('AWS_BUCKET_NAME', 'ladyembersongs-recordings')
+AWS_BUCKET_NAME = os.environ.get('AWS_BUCKET_NAME', 'ladyembertest1')
 
 # S3 client
 s3_client = boto3.client(
