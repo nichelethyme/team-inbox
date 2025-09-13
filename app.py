@@ -975,8 +975,13 @@ def upload_to_s3(file_url, filename):
             region_name=aws_region
         )
 
-        # Create authenticated request for Twilio recording
-        import base64
+        print(f"📥 Attempting to download from Twilio: {file_url}")
+
+        # Download file from Twilio with authentication
+        import urllib.parse
+        from urllib.request import HTTPPasswordMgrWithDefaultRealm, HTTPBasicAuthHandler, build_opener
+
+        # Extract credentials
         twilio_account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
         twilio_auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
 
@@ -984,18 +989,20 @@ def upload_to_s3(file_url, filename):
             print("❌ Missing Twilio credentials")
             return None
 
-        auth_string = f"{twilio_account_sid}:{twilio_auth_token}"
-        base64_auth = base64.b64encode(auth_string.encode()).decode()
+        # Create authentication handler for Twilio
+        password_mgr = HTTPPasswordMgrWithDefaultRealm()
+        password_mgr.add_password(None, "https://api.twilio.com", twilio_account_sid, twilio_auth_token)
+        auth_handler = HTTPBasicAuthHandler(password_mgr)
+        opener = build_opener(auth_handler)
 
-        request = urllib.request.Request(file_url)
-        request.add_header("Authorization", f"Basic {base64_auth}")
-
-        print(f"📥 Downloading from Twilio: {file_url}")
-
-        # Download file from Twilio
-        with urllib.request.urlopen(request) as response:
+        # Download the file
+        try:
+            response = opener.open(file_url, timeout=30)
             file_data = response.read()
-            print(f"✅ Downloaded {len(file_data)} bytes")
+            print(f"✅ Downloaded {len(file_data)} bytes from Twilio")
+        except Exception as download_error:
+            print(f"❌ Twilio download failed: {download_error}")
+            return None
 
         # Create S3 key with folder structure: recordings/YYYY-MM-DD/filename
         date_folder = datetime.now().strftime('%Y-%m-%d')
