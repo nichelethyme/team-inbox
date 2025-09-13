@@ -514,6 +514,153 @@
             border-color: var(--accent-primary);
         }
 
+        /* Three-tab system styles */
+        .main-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            padding: 10px;
+            border: 1px solid var(--border-light);
+        }
+
+        .tab-btn {
+            background: white;
+            border: 1px solid var(--border-medium);
+            padding: 12px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-weight: 500;
+            color: var(--text-secondary);
+            flex: 1;
+            text-align: center;
+        }
+
+        .tab-btn:hover {
+            background: var(--bg-tertiary);
+            border-color: var(--accent-primary);
+            color: var(--accent-primary);
+        }
+
+        .tab-btn.active {
+            background: var(--accent-primary);
+            color: white;
+            border-color: var(--accent-primary);
+            box-shadow: var(--shadow);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Project tab specific styles */
+        .projects-container {
+            background: white;
+            border-radius: 12px;
+            border: 1px solid var(--border-light);
+            box-shadow: var(--shadow);
+            padding: 20px;
+        }
+
+        .project-item {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-light);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            transition: all 0.2s ease;
+        }
+
+        .project-item:hover {
+            box-shadow: var(--shadow);
+            transform: translateY(-1px);
+        }
+
+        .project-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .project-title {
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .project-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .project-meta {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        /* Phrases tab specific styles */
+        .phrases-container {
+            background: white;
+            border-radius: 12px;
+            border: 1px solid var(--border-light);
+            box-shadow: var(--shadow);
+            padding: 20px;
+        }
+
+        .phrase-item {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-light);
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            transition: all 0.2s ease;
+        }
+
+        .phrase-item:hover {
+            box-shadow: var(--shadow);
+            transform: translateY(-1px);
+        }
+
+        .editable-title {
+            background: transparent;
+            border: 1px solid transparent;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: 600;
+            color: var(--text-primary);
+            cursor: text;
+            transition: all 0.2s ease;
+        }
+
+        .editable-title:hover, .editable-title:focus {
+            background: white;
+            border-color: var(--accent-primary);
+            outline: none;
+        }
+
+        .save-btn {
+            background: var(--success);
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            margin-left: 10px;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+
+        .editable-title:focus + .save-btn, .save-btn:hover {
+            opacity: 1;
+        }
+
         @media (max-width: 768px) {
             .header-content {
                 flex-direction: column;
@@ -533,6 +680,10 @@
             .inbox-grid {
                 grid-template-columns: 1fr;
             }
+
+            .main-tabs {
+                flex-direction: column;
+            }
         }
     </style>
 </head>
@@ -549,78 +700,165 @@
     </div>
 
     <div class="main-container">
-        <div class="toolbar">
-            <button class="new-project-btn" onclick="toggleProjectMode()">
-                ✨ New Project
-            </button>
+        <div class="main-tabs">
+            <button class="tab-btn active" onclick="showTab('inbox')">📥 Inbox</button>
+            <button class="tab-btn" onclick="showTab('projects')">🎼 Projects</button>
+            <button class="tab-btn" onclick="showTab('phrases')">📝 Phrases</button>
+        </div>
 
-            <div class="controls">
-                <button class="control-btn" onclick="importS3Zip()">📦 Import Archive</button>
-                <button class="control-btn" onclick="refreshInbox()">🔄 Refresh</button>
-                <select class="control-btn" onchange="sortInbox(this.value)">
-                    <option value="newest">Newest First</option>
-                    <option value="oldest">Oldest First</option>
-                    <option value="name">By Name</option>
-                </select>
+        <!-- Inbox Tab -->
+        <div id="inbox-tab" class="tab-content active">
+            <div class="toolbar">
+                <button class="new-project-btn" onclick="createNewProject()" id="newProjectBtn">
+                    ✨ New Project
+                </button>
+
+                <div class="controls">
+                    <button class="control-btn" onclick="importS3Zip()">📦 Import Archive</button>
+                    <select class="control-btn" onchange="sortContent(this.value)">
+                        <option value="newest">Newest First</option>
+                        <option value="oldest">Oldest First</option>
+                        <option value="name">By Name</option>
+                    </select>
+                    <button class="control-btn" onclick="bulkDelete()">🗑️ Bulk Delete</button>
+                </div>
+            </div>
+
+            <div class="inbox-grid" id="inboxGrid">
+                {% for item in inbox_items %}
+                <div class="inbox-item" data-id="{{ item.id }}" data-type="{{ item.content_type }}" data-url="{{ item.s3_url }}">
+                    <div class="item-header">
+                        <div>
+                            <input type="text" class="editable-title" value="{{ item.title }}" data-id="{{ item.id }}" onblur="updateTitle('{{ item.id }}', this.value)" />
+                            <button class="save-btn" onclick="updateTitle('{{ item.id }}', this.previousElementSibling.value)">💾</button>
+                            <div class="item-meta">{{ item.sender_name }} • {{ item.date_folder }}</div>
+                        </div>
+                        <div class="content-type {{ item.content_type }}">{{ item.content_type }}</div>
+                    </div>
+
+                    {% if item.content_type == 'voice' and item.s3_url %}
+                    <div class="audio-controls">
+                        <button class="play-btn" onclick="togglePlay('{{ item.id }}')">
+                            <span id="play-icon-{{ item.id }}">▶</span>
+                        </button>
+                        <div class="waveform" id="waveform-{{ item.id }}">
+                            <div class="waveform-bars"></div>
+                        </div>
+                        <div class="speed-controls">
+                            <button class="speed-btn" onclick="setSpeed('{{ item.id }}', 0.5)">0.5x</button>
+                            <button class="speed-btn active" onclick="setSpeed('{{ item.id }}', 1)">1x</button>
+                            <button class="speed-btn" onclick="setSpeed('{{ item.id }}', 1.5)">1.5x</button>
+                            <button class="speed-btn" onclick="setSpeed('{{ item.id }}', 2)">2x</button>
+                        </div>
+                    </div>
+
+                    <div class="melodyne-controls" id="melodyne-{{ item.id }}" style="display: none;">
+                        <div class="pitch-info">
+                            <span class="detected-key" id="key-{{ item.id }}">🎹 Key: Analyzing...</span>
+                            <span class="tempo-info" id="tempo-{{ item.id }}">🥁 BPM: Analyzing...</span>
+                        </div>
+                        <div class="transpose-controls">
+                            <label>🎵 Transpose:</label>
+                            <input type="range" min="-12" max="12" value="0" class="transpose-slider" id="transpose-{{ item.id }}" oninput="previewTranspose('{{ item.id }}', this.value)">
+                            <span class="transpose-value" id="transpose-value-{{ item.id }}">0</span>
+                            <button class="control-btn" onclick="applyTranspose('{{ item.id }}')">Apply</button>
+                        </div>
+                        <div class="pitch-track" id="pitch-track-{{ item.id }}">
+                            <!-- Pitch visualization will be drawn here -->
+                        </div>
+                    </div>
+
+                    <div class="item-actions">
+                        <button class="action-btn" onclick="toggleMelodyne('{{ item.id }}')">🎼 Analyze</button>
+                        <button class="action-btn" onclick="sendToProject('{{ item.id }}')">📁 To Project</button>
+                        <button class="action-btn" onclick="sendToPhrases('{{ item.id }}')">📝 To Phrases</button>
+                        <button class="action-btn" onclick="deleteItem('{{ item.id }}')">🗑️ Delete</button>
+                    </div>
+                    <audio id="audio-{{ item.id }}" preload="none" onended="onAudioEnded('{{ item.id }}')">
+                        <source src="{{ item.s3_url }}" type="audio/mpeg">
+                    </audio>
+                    {% endif %}
+
+                    <div class="item-content">{{ item.content }}</div>
+                </div>
+                {% endfor %}
             </div>
         </div>
 
-        <div class="inbox-grid" id="inboxGrid">
-            {% for item in inbox_items %}
-            <div class="inbox-item" data-id="{{ item.id }}" data-type="{{ item.content_type }}" data-url="{{ item.s3_url }}">
-                <div class="item-header">
-                    <div>
-                        <div class="item-title">{{ item.title }}</div>
-                        <div class="item-meta">{{ item.sender_name }} • {{ item.date_folder }}</div>
-                    </div>
-                    <div class="content-type {{ item.content_type }}">{{ item.content_type }}</div>
+        <!-- Projects Tab -->
+        <div id="projects-tab" class="tab-content">
+            <div class="toolbar">
+                <button class="new-project-btn" onclick="createNewProject()">
+                    ✨ Create New Project
+                </button>
+                <div class="controls">
+                    <select class="control-btn" onchange="filterProjects(this.value)">
+                        <option value="all">All Projects</option>
+                        <option value="recent">Recent</option>
+                        <option value="favorites">Favorites</option>
+                    </select>
+                    <button class="control-btn" onclick="exportAllProjects()">💾 Export All</button>
                 </div>
-
-                {% if item.content_type == 'voice' and item.s3_url %}
-                <div class="audio-controls">
-                    <button class="play-btn" onclick="togglePlay('{{ item.id }}')">
-                        <span id="play-icon-{{ item.id }}">▶</span>
-                    </button>
-                    <div class="waveform" id="waveform-{{ item.id }}">
-                        <div class="waveform-bars"></div>
-                    </div>
-                    <div class="speed-controls">
-                        <button class="speed-btn" onclick="setSpeed('{{ item.id }}', 0.5)">0.5x</button>
-                        <button class="speed-btn active" onclick="setSpeed('{{ item.id }}', 1)">1x</button>
-                        <button class="speed-btn" onclick="setSpeed('{{ item.id }}', 1.5)">1.5x</button>
-                        <button class="speed-btn" onclick="setSpeed('{{ item.id }}', 2)">2x</button>
-                    </div>
-                </div>
-
-                <div class="melodyne-controls" id="melodyne-{{ item.id }}" style="display: none;">
-                    <div class="pitch-info">
-                        <span class="detected-key" id="key-{{ item.id }}">🎹 Key: Analyzing...</span>
-                        <span class="tempo-info" id="tempo-{{ item.id }}">🥁 BPM: Analyzing...</span>
-                    </div>
-                    <div class="transpose-controls">
-                        <label>🎵 Transpose:</label>
-                        <input type="range" min="-12" max="12" value="0" class="transpose-slider" id="transpose-{{ item.id }}" oninput="previewTranspose('{{ item.id }}', this.value)">
-                        <span class="transpose-value" id="transpose-value-{{ item.id }}">0</span>
-                        <button class="control-btn" onclick="applyTranspose('{{ item.id }}')">Apply</button>
-                    </div>
-                    <div class="pitch-track" id="pitch-track-{{ item.id }}">
-                        <!-- Pitch visualization will be drawn here -->
-                    </div>
-                </div>
-
-                <div class="item-actions">
-                    <button class="action-btn" onclick="toggleMelodyne('{{ item.id }}')">🎼 Analyze</button>
-                    <button class="action-btn" onclick="duplicateItem('{{ item.id }}')">📋 Duplicate</button>
-                    <button class="action-btn" onclick="deleteItem('{{ item.id }}')">🗑️ Delete</button>
-                </div>
-                <audio id="audio-{{ item.id }}" preload="none" onended="onAudioEnded('{{ item.id }}')">
-                    <source src="{{ item.s3_url }}" type="audio/mpeg">
-                </audio>
-                {% endif %}
-
-                <div class="item-content">{{ item.content }}</div>
             </div>
-            {% endfor %}
+
+            <div class="projects-container" id="projectsContainer">
+                <div class="project-item" data-project-id="sample">
+                    <div class="project-header">
+                        <input type="text" class="editable-title" value="My First Project" onblur="updateProjectTitle('sample', this.value)" />
+                        <button class="save-btn" onclick="updateProjectTitle('sample', this.previousElementSibling.value)">💾</button>
+                        <div class="project-actions">
+                            <button class="action-btn" onclick="playProject('sample')">▶ Play</button>
+                            <button class="action-btn" onclick="editProject('sample')">✏️ Edit</button>
+                            <button class="action-btn" onclick="duplicateProject('sample')">📋 Duplicate</button>
+                            <button class="action-btn" onclick="deleteProject('sample')">🗑️ Delete</button>
+                        </div>
+                    </div>
+                    <div class="project-meta">Created today • 3 tracks • Key: C Major</div>
+
+                    <div class="project-sections">
+                        <div class="section">
+                            <h4>📝 Production Notes</h4>
+                            <textarea class="notes-area" placeholder="Add production notes here..." rows="3"></textarea>
+                        </div>
+                        <div class="section">
+                            <h4>🎵 Lyrics</h4>
+                            <textarea class="lyrics-area" placeholder="Add lyrics here..." rows="4"></textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Phrases Tab -->
+        <div id="phrases-tab" class="tab-content">
+            <div class="toolbar">
+                <button class="new-project-btn" onclick="recordNewPhrase()">
+                    🎤 Record New Phrase
+                </button>
+                <div class="controls">
+                    <select class="control-btn" onchange="filterPhrases(this.value)">
+                        <option value="all">All Phrases</option>
+                        <option value="recent">Recent</option>
+                        <option value="favorites">Favorites</option>
+                    </select>
+                    <button class="control-btn" onclick="bulkDeletePhrases()">🗑️ Bulk Delete</button>
+                </div>
+            </div>
+
+            <div class="phrases-container" id="phrasesContainer">
+                <div class="phrase-item" data-phrase-id="sample">
+                    <div class="project-header">
+                        <input type="text" class="editable-title" value="Chorus Hook Idea" onblur="updatePhraseTitle('sample', this.value)" />
+                        <button class="save-btn" onclick="updatePhraseTitle('sample', this.previousElementSibling.value)">💾</button>
+                        <div class="project-actions">
+                            <button class="action-btn" onclick="playPhrase('sample')">▶ Play</button>
+                            <button class="action-btn" onclick="sendPhraseToProject('sample')">📁 To Project</button>
+                            <button class="action-btn" onclick="deletePhrase('sample')">🗑️ Delete</button>
+                        </div>
+                    </div>
+                    <div class="project-meta">Recorded today • 0:15 duration</div>
+                </div>
+            </div>
         </div>
 
         <div class="project-workspace" id="projectWorkspace">
@@ -991,7 +1229,7 @@
             }
         }
 
-        function sortInbox(sortBy) {
+        function sortContent(sortBy) {
             const grid = document.getElementById('inboxGrid');
             const items = Array.from(grid.children);
 
@@ -1014,23 +1252,194 @@
         }
 
         function closeProject() {
-            toggleProjectMode();
+            showTab('inbox');
         }
 
-        function playProject() {
-            alert('🎵 Project playback coming soon!');
+        // Tab system functions
+        function showTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+
+            // Remove active class from all tab buttons
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+
+            // Show selected tab
+            document.getElementById(tabName + '-tab').classList.add('active');
+
+            // Activate selected button
+            event.target.classList.add('active');
+
+            // Load content if needed
+            if (tabName === 'projects') {
+                loadProjects();
+            } else if (tabName === 'phrases') {
+                loadPhrases();
+            }
         }
 
-        function pauseProject() {
-            alert('⏸ Project pause coming soon!');
+        function createNewProject() {
+            const currentTab = document.querySelector('.tab-content.active').id;
+
+            if (currentTab === 'projects-tab' || currentTab === 'inbox-tab') {
+                const projectName = prompt('Enter project name:', 'New Project');
+                if (projectName) {
+                    fetch('/api/create-project', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            name: projectName,
+                            selected_items: Array.from(selectedItems)
+                        })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            showTab('projects');
+                            loadProjects();
+                        } else {
+                            alert('Failed to create project: ' + data.error);
+                        }
+                    })
+                    .catch(error => {
+                        alert('Error creating project: ' + error.message);
+                    });
+                }
+            } else if (currentTab === 'phrases-tab') {
+                recordNewPhrase();
+            }
         }
 
-        function stopProject() {
-            alert('⏹ Project stop coming soon!');
+        // Project functions
+        function loadProjects() {
+            fetch('/api/projects')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        updateProjectsDisplay(data.projects);
+                    }
+                })
+                .catch(error => console.error('Error loading projects:', error));
         }
 
-        function exportProject() {
-            alert('💾 Project export coming soon!');
+        function updateProjectsDisplay(projects) {
+            const container = document.getElementById('projectsContainer');
+            container.innerHTML = '';
+
+            projects.forEach(project => {
+                const projectHtml = `
+                    <div class="project-item" data-project-id="${project.id}">
+                        <div class="project-header">
+                            <input type="text" class="editable-title" value="${project.name}" onblur="updateProjectTitle('${project.id}', this.value)" />
+                            <button class="save-btn" onclick="updateProjectTitle('${project.id}', this.previousElementSibling.value)">💾</button>
+                            <div class="project-actions">
+                                <button class="action-btn" onclick="playProject('${project.id}')">▶ Play</button>
+                                <button class="action-btn" onclick="editProject('${project.id}')">✏️ Edit</button>
+                                <button class="action-btn" onclick="duplicateProject('${project.id}')">📋 Duplicate</button>
+                                <button class="action-btn" onclick="deleteProject('${project.id}')">🗑️ Delete</button>
+                            </div>
+                        </div>
+                        <div class="project-meta">${project.created_at} • ${project.track_count || 0} tracks</div>
+                        <div class="project-sections">
+                            <div class="section">
+                                <h4>📝 Production Notes</h4>
+                                <textarea class="notes-area" placeholder="Add production notes here..." rows="3" onblur="updateProjectNotes('${project.id}', this.value)">${project.notes || ''}</textarea>
+                            </div>
+                            <div class="section">
+                                <h4>🎵 Lyrics</h4>
+                                <textarea class="lyrics-area" placeholder="Add lyrics here..." rows="4" onblur="updateProjectLyrics('${project.id}', this.value)">${project.lyrics || ''}</textarea>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                container.innerHTML += projectHtml;
+            });
+        }
+
+        function playProject(projectId) {
+            fetch('/api/play-project/' + projectId, {method: 'POST'})
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Handle project playback
+                        alert('🎵 Playing project: ' + data.project_name);
+                    } else {
+                        alert('❌ Failed to play project: ' + data.error);
+                    }
+                })
+                .catch(error => {
+                    alert('❌ Playback error: ' + error.message);
+                });
+        }
+
+        function editProject(projectId) {
+            // Open project in timeline editor
+            showTab('inbox'); // For now, just go back to inbox
+            alert('✏️ Project editor coming soon!');
+        }
+
+        function updateProjectTitle(projectId, newTitle) {
+            fetch('/api/update-project-title', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    project_id: projectId,
+                    title: newTitle
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (!data.success) {
+                    alert('Failed to update title: ' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error updating project title:', error);
+            });
+        }
+
+        function updateProjectNotes(projectId, notes) {
+            fetch('/api/update-project-notes', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    project_id: projectId,
+                    notes: notes
+                })
+            })
+            .catch(error => console.error('Error updating notes:', error));
+        }
+
+        function updateProjectLyrics(projectId, lyrics) {
+            fetch('/api/update-project-lyrics', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    project_id: projectId,
+                    lyrics: lyrics
+                })
+            })
+            .catch(error => console.error('Error updating lyrics:', error));
+        }
+
+        function deleteProject(projectId) {
+            if (confirm('🗑️ Delete this project? This cannot be undone.')) {
+                fetch('/api/delete-project/' + projectId, {method: 'DELETE'})
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            loadProjects();
+                        } else {
+                            alert('Failed to delete project: ' + data.error);
+                        }
+                    })
+                    .catch(error => {
+                        alert('Error deleting project: ' + error.message);
+                    });
+            }
         }
 
         function scrollToTop() {
@@ -1205,13 +1614,211 @@
             });
         }
 
-        function duplicateItem(itemId) {
-            alert('📋 Duplicate feature coming soon!');
+        // Phrases functions
+        function loadPhrases() {
+            fetch('/api/phrases')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        updatePhrasesDisplay(data.phrases);
+                    }
+                })
+                .catch(error => console.error('Error loading phrases:', error));
+        }
+
+        function updatePhrasesDisplay(phrases) {
+            const container = document.getElementById('phrasesContainer');
+            container.innerHTML = '';
+
+            phrases.forEach(phrase => {
+                const phraseHtml = `
+                    <div class="phrase-item" data-phrase-id="${phrase.id}">
+                        <div class="project-header">
+                            <input type="text" class="editable-title" value="${phrase.title}" onblur="updatePhraseTitle('${phrase.id}', this.value)" />
+                            <button class="save-btn" onclick="updatePhraseTitle('${phrase.id}', this.previousElementSibling.value)">💾</button>
+                            <div class="project-actions">
+                                <button class="action-btn" onclick="playPhrase('${phrase.id}')">▶ Play</button>
+                                <button class="action-btn" onclick="sendPhraseToProject('${phrase.id}')">📁 To Project</button>
+                                <button class="action-btn" onclick="deletePhrase('${phrase.id}')">🗑️ Delete</button>
+                            </div>
+                        </div>
+                        <div class="project-meta">${phrase.created_at} • ${phrase.duration || '0:15'} duration</div>
+                    </div>
+                `;
+                container.innerHTML += phraseHtml;
+            });
+        }
+
+        function recordNewPhrase() {
+            alert('🎤 Voice phrase recording coming soon! For now, use the phone system.');
+        }
+
+        function updatePhraseTitle(phraseId, newTitle) {
+            fetch('/api/update-phrase-title', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    phrase_id: phraseId,
+                    title: newTitle
+                })
+            })
+            .catch(error => console.error('Error updating phrase title:', error));
+        }
+
+        function playPhrase(phraseId) {
+            fetch('/api/play-phrase/' + phraseId, {method: 'POST'})
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('🎵 Playing phrase: ' + data.phrase_title);
+                    } else {
+                        alert('❌ Failed to play phrase: ' + data.error);
+                    }
+                })
+                .catch(error => alert('❌ Playback error: ' + error.message));
+        }
+
+        function sendPhraseToProject(phraseId) {
+            const projectName = prompt('Enter project name:', 'New Project from Phrase');
+            if (projectName) {
+                fetch('/api/phrase-to-project', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        phrase_id: phraseId,
+                        project_name: projectName
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showTab('projects');
+                        loadProjects();
+                    } else {
+                        alert('Failed to create project: ' + data.error);
+                    }
+                })
+                .catch(error => alert('Error: ' + error.message));
+            }
+        }
+
+        function deletePhrase(phraseId) {
+            if (confirm('🗑️ Delete this phrase? This cannot be undone.')) {
+                fetch('/api/delete-phrase/' + phraseId, {method: 'DELETE'})
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            loadPhrases();
+                        } else {
+                            alert('Failed to delete phrase: ' + data.error);
+                        }
+                    })
+                    .catch(error => alert('Error deleting phrase: ' + error.message));
+            }
+        }
+
+        // Inbox item functions
+        function updateTitle(itemId, newTitle) {
+            fetch('/api/update-title', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    item_id: itemId,
+                    title: newTitle
+                })
+            })
+            .catch(error => console.error('Error updating title:', error));
+        }
+
+        function sendToProject(itemId) {
+            const projectName = prompt('Enter project name:', 'New Project');
+            if (projectName) {
+                fetch('/api/send-to-project', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        item_id: itemId,
+                        project_name: projectName
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('✅ Added to project: ' + projectName);
+                        showTab('projects');
+                        loadProjects();
+                    } else {
+                        alert('❌ Failed to add to project: ' + data.error);
+                    }
+                })
+                .catch(error => alert('❌ Error: ' + error.message));
+            }
+        }
+
+        function sendToPhrases(itemId) {
+            fetch('/api/send-to-phrases', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    item_id: itemId
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('✅ Added to phrases!');
+                    showTab('phrases');
+                    loadPhrases();
+                } else {
+                    alert('❌ Failed to add to phrases: ' + data.error);
+                }
+            })
+            .catch(error => alert('❌ Error: ' + error.message));
         }
 
         function deleteItem(itemId) {
-            if (confirm('🗑️ Are you sure you want to delete this item?')) {
-                alert('Delete feature coming soon!');
+            if (confirm('🗑️ Delete this item? This cannot be undone.')) {
+                fetch('/api/delete-item/' + itemId, {method: 'DELETE'})
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            document.querySelector(`[data-id="${itemId}"]`).remove();
+                        } else {
+                            alert('❌ Failed to delete: ' + data.error);
+                        }
+                    })
+                    .catch(error => alert('❌ Error: ' + error.message));
+            }
+        }
+
+        function bulkDelete() {
+            if (selectedItems.size === 0) {
+                alert('❌ No items selected for bulk delete');
+                return;
+            }
+
+            if (confirm(`🗑️ Delete ${selectedItems.size} selected items? This cannot be undone.`)) {
+                fetch('/api/bulk-delete', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        item_ids: Array.from(selectedItems)
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        selectedItems.forEach(id => {
+                            const element = document.querySelector(`[data-id="${id}"]`);
+                            if (element) element.remove();
+                        });
+                        selectedItems.clear();
+                        alert(`✅ Deleted ${data.deleted_count} items`);
+                    } else {
+                        alert('❌ Bulk delete failed: ' + data.error);
+                    }
+                })
+                .catch(error => alert('❌ Error: ' + error.message));
             }
         }
 
@@ -1220,6 +1827,13 @@
             document.querySelectorAll('.inbox-item[data-type="voice"]').forEach(item => {
                 generateWaveform(item.dataset.id);
             });
+
+            // Enable item selection by default for inbox
+            enableItemSelection();
+
+            // Load initial data for all tabs
+            loadProjects();
+            loadPhrases();
         });
     </script>
 </body>

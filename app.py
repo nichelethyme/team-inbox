@@ -52,13 +52,229 @@ def init_db():
                   date_folder TEXT,
                   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
 
+    # Create projects table
+    c.execute('''CREATE TABLE IF NOT EXISTS projects
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  name TEXT NOT NULL,
+                  notes TEXT,
+                  lyrics TEXT,
+                  track_count INTEGER DEFAULT 0,
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+
+    # Create phrases table
+    c.execute('''CREATE TABLE IF NOT EXISTS phrases
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  title TEXT NOT NULL,
+                  content TEXT,
+                  s3_url TEXT,
+                  duration TEXT,
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+
+    # Create project_items table for linking inbox items to projects
+    c.execute('''CREATE TABLE IF NOT EXISTS project_items
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  project_id INTEGER NOT NULL,
+                  inbox_id INTEGER NOT NULL,
+                  position INTEGER DEFAULT 0,
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                  FOREIGN KEY (project_id) REFERENCES projects (id),
+                  FOREIGN KEY (inbox_id) REFERENCES inbox (id))''')
+
     conn.commit()
     conn.close()
-    print("Database initialized with songs and inbox tables")
+    print("Database initialized with songs, inbox, projects, and phrases tables")
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    """Main page with all inbox content loaded"""
+    try:
+        conn = sqlite3.connect('songs.db')
+        c = conn.cursor()
+        c.execute('''SELECT id, sender_name, sender_phone, content_type, title, content, s3_url, date_folder, created_at
+                     FROM inbox
+                     ORDER BY created_at DESC''')
+        inbox_items = []
+        for row in c.fetchall():
+            inbox_items.append({
+                'id': row[0],
+                'sender_name': row[1],
+                'sender_phone': row[2],
+                'content_type': row[3],
+                'title': row[4],
+                'content': row[5],
+                's3_url': row[6],
+                'date_folder': row[7],
+                'created_at': row[8]
+            })
+        conn.close()
+
+        # Auto-import desktop files on load
+        auto_import_desktop_files()
+
+        return render_template('index.html', inbox_items=inbox_items)
+    except Exception as e:
+        print(f"Error loading inbox: {e}")
+        return render_template('index.html', inbox_items=[])
+
+def auto_import_desktop_files():
+    """Auto-import audio files from desktop without user action"""
+    try:
+        import os
+        import glob
+
+        desktop_patterns = [
+            '/Users/asiamurray/Desktop/*.mp3',
+            '/Users/asiamurray/Desktop/*.wav',
+            '/Users/asiamurray/Desktop/*.m4a'
+        ]
+
+        conn = sqlite3.connect('songs.db')
+        c = conn.cursor()
+
+        # Get existing files to avoid duplicates
+        c.execute("SELECT content FROM inbox WHERE sender_name = 'Desktop Import'")
+        existing = {row[0] for row in c.fetchall()}
+
+        imported = 0
+        for pattern in desktop_patterns:
+            for file_path in glob.glob(pattern):
+                filename = os.path.basename(file_path)
+                content_key = f"Desktop: {filename}"
+
+                if content_key in existing:
+                    continue
+
+                try:
+                    with open(file_path, 'rb') as f:
+                        file_data = f.read()
+
+                    # Upload to S3
+                    s3_client = boto3.client(
+                        's3',
+                        aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
+                        aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
+                        region_name=os.environ.get('AWS_REGION', 'us-east-1')
+                    )
+
+                    date_folder = datetime.now().strftime('%Y-%m-%d')
+                    s3_key = f"recordings/{date_folder}/desktop_{filename}"
+
+                    s3_client.put_object(
+                        Bucket=os.environ.get('AWS_BUCKET_NAME'),
+                        Key=s3_key,
+                        Body=file_data,
+                        ContentType='audio/mpeg' if filename.endswith('.mp3') else 'audio/wav'
+                    )
+
+                    signed_url = s3_client.generate_presigned_url(
+                        'get_object',
+                        Params={'Bucket': os.environ.get('AWS_BUCKET_NAME'), 'Key': s3_key},
+                        ExpiresIn=3600
+                    )
+
+                    # Add to inbox
+                    c.execute("""INSERT INTO inbox
+                                 (sender_name, sender_phone, content_type, title, content, s3_url, date_folder)
+                                 VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                              ('Desktop Import', 'LOCAL', 'voice', content_key, content_key, signed_url, date_folder))
+
+                    imported += 1
+                    print(f"✅ Auto-imported: {filename}")
+
+                except Exception as e:
+                    print(f"❌ Import failed {filename}: {e}")
+
+        if imported:
+            conn.commit()
+            print(f"📁 Auto-imported {imported} desktop files")
+        conn.close()
+
+    except Exception as e:
+        print(f"❌ Auto-import error: {e}")
+
+@app.route('/api/inbox')
+def api_inbox():
+    """Real-time inbox API for auto-refresh"""
+    try:
+        conn = sqlite3.connect('songs.db')
+        c = conn.cursor()
+        c.execute('''SELECT id, sender_name, sender_phone, content_type, title, content, s3_url, date_folder, created_at
+                     FROM inbox ORDER BY created_at DESC''')
+
+        items = []
+        for row in c.fetchall():
+            items.append({
+                'id': row[0], 'sender_name': row[1], 'sender_phone': row[2], 'content_type': row[3],
+                'title': row[4], 'content': row[5], 's3_url': row[6], 'date_folder': row[7], 'created_at': row[8]
+            })
+        conn.close()
+        return jsonify({'success': True, 'items': items})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/update-title', methods=['POST'])
+def update_title():
+    """Update item title with save button"""
+    try:
+        data = request.json
+        item_id = data.get('id')
+        new_title = data.get('title')
+
+        conn = sqlite3.connect('songs.db')
+        c = conn.cursor()
+        c.execute("UPDATE inbox SET title = ? WHERE id = ?", (new_title, item_id))
+        conn.commit()
+        conn.close()
+
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/delete-item', methods=['POST'])
+def delete_item():
+    """One-click delete without confirmation"""
+    try:
+        data = request.json
+        item_id = data.get('id')
+
+        conn = sqlite3.connect('songs.db')
+        c = conn.cursor()
+        c.execute("DELETE FROM inbox WHERE id = ?", (item_id,))
+        conn.commit()
+        conn.close()
+
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/send-to-phrases', methods=['POST'])
+def send_to_phrases():
+    """Send voice note to phrases collection"""
+    try:
+        data = request.json
+        item_id = data.get('id')
+
+        conn = sqlite3.connect('songs.db')
+        c = conn.cursor()
+
+        # Get original item
+        c.execute("SELECT * FROM inbox WHERE id = ?", (item_id,))
+        row = c.fetchone()
+
+        if row:
+            # Add to phrases with special marker
+            c.execute("""INSERT INTO inbox
+                         (sender_name, sender_phone, content_type, title, content, s3_url, date_folder)
+                         VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                      ('PHRASES', row[2], row[3], f"📝 {row[4]}", row[5], row[6], row[7]))
+
+        conn.commit()
+        conn.close()
+
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/songs')
 def get_songs():
@@ -1625,57 +1841,6 @@ def fix_missing_recording():
         return jsonify({
             'success': False,
             'error': str(e)
-        })
-
-@app.route('/api/debug-upload', methods=['POST', 'GET'])
-def debug_upload():
-    """Test endpoint to debug upload_to_s3 function"""
-    print("🔍 DEBUG: debug_upload endpoint called!")
-    if request.method == 'GET':
-        return jsonify({'message': 'debug endpoint is working', 'method': 'GET'})
-    try:
-        # Use a mock Twilio recording URL for testing (without .wav - like real webhook)
-        account_sid = os.environ.get('TWILIO_ACCOUNT_SID', 'TEST_ACCOUNT_SID')
-        test_base_url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Recordings/test"
-        test_url_with_wav = test_base_url + ".wav"
-        test_filename = f"test-{datetime.now().strftime('%Y%m%d-%H%M%S')}.wav"
-
-        print(f"🔍 Testing upload with URL: {test_url_with_wav}")
-        print(f"🔍 Testing upload with filename: {test_filename}")
-        print(f"🔍 About to call upload_to_s3...")
-
-        result = upload_to_s3(test_url_with_wav, test_filename)
-
-        print(f"🔍 upload_to_s3 returned: {result}")
-
-        # Also check AWS credentials
-        aws_access_key = os.environ.get('AWS_ACCESS_KEY_ID')
-        aws_secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
-        aws_bucket = os.environ.get('AWS_BUCKET_NAME')
-        twilio_account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
-        twilio_auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
-
-        return jsonify({
-            'success': bool(result),
-            'result': result,
-            'error': last_download_error if not result else None,
-            'test_url': test_url_with_wav,
-            'test_filename': test_filename,
-            'credentials_check': {
-                'has_aws_key': bool(aws_access_key),
-                'has_aws_secret': bool(aws_secret_key),
-                'has_aws_bucket': bool(aws_bucket),
-                'bucket_name': aws_bucket,
-                'has_twilio_sid': bool(twilio_account_sid),
-                'has_twilio_token': bool(twilio_auth_token)
-            }
-        })
-
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'error_type': type(e).__name__
         })
 
 if __name__ == '__main__':
