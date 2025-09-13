@@ -522,24 +522,96 @@ def handle_incoming_call():
     """Handle incoming Twilio voice calls"""
     from_number = request.values.get('From', '')
     
-    # TwiML response for call menu
+    # Simple recording - no complex menu
     twiml_response = '''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice">Welcome to Lady Ember Songs! You are now recording. Press 1 for new voice note, 2 to pause, 3 to delete and restart, or 4 to save and end.</Say>
-    <Record 
-        action="/twilio/recording" 
+    <Say voice="alice">Lady Ember Songs. Record at the beep. Press 1 when done.</Say>
+    <Record
+        action="/twilio/recording"
         method="POST"
         maxLength="300"
         playBeep="true"
         recordingStatusCallback="/twilio/recording-status"
         timeout="10"
+        finishOnKey="1"
     />
-    <Gather action="/twilio/menu" method="POST" numDigits="1" timeout="30">
-        <Say voice="alice">Press any key for menu options.</Say>
-    </Gather>
 </Response>'''
     
     return twiml_response, 200, {'Content-Type': 'application/xml'}
+
+@app.route('/twilio/recording', methods=['POST'])
+def handle_recording():
+    """Process completed recording and save to S3"""
+    try:
+        print("📥 Recording webhook received")
+        print(f"Request data: {dict(request.values)}")
+
+        recording_url = request.values.get('RecordingUrl', '')
+        recording_sid = request.values.get('RecordingSid', '')
+        call_sid = request.values.get('CallSid', '')
+        from_number = request.values.get('From', '')
+
+        if recording_url and recording_sid:
+            filename = f"call_recording_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
+
+            # Upload to S3
+            s3_url = upload_to_s3(recording_url, filename)
+
+            if s3_url:
+                # Detect sender and organize by date
+                sender_name = detect_sender_name(from_number)
+                date_folder = datetime.now().strftime('%Y-%m-%d')
+                title = f"{sender_name} - Voice {datetime.now().strftime('%H:%M')}"
+
+                # Save to inbox system
+                conn = sqlite3.connect('songs.db')
+                c = conn.cursor()
+
+                c.execute("""INSERT INTO inbox
+                             (sender_name, sender_phone, content_type, title, content, s3_url, date_folder)
+                             VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                          (sender_name, from_number, 'voice', title, f"Voice recording - {filename}", s3_url, date_folder))
+
+                conn.commit()
+                conn.close()
+
+                print(f"🎤 Voice recording from {sender_name}: {filename} -> {s3_url}")
+
+                # Return confirmation TwiML
+                confirmation = '''<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Recording saved successfully! Goodbye.</Say>
+    <Hangup/>
+</Response>'''
+                return confirmation, 200, {'Content-Type': 'application/xml'}
+
+        # If no recording URL, just hang up
+        hangup = '''<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">No recording received. Goodbye.</Say>
+    <Hangup/>
+</Response>'''
+        return hangup, 200, {'Content-Type': 'application/xml'}
+
+    except Exception as e:
+        print(f"Recording error: {e}")
+        traceback.print_exc()
+
+        error_response = '''<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Sorry, there was an error saving your recording. Goodbye.</Say>
+    <Hangup/>
+</Response>'''
+        return error_response, 200, {'Content-Type': 'application/xml'}
+
+@app.route('/twilio/recording-status', methods=['POST'])
+def handle_recording_status():
+    """Handle recording status updates"""
+    recording_sid = request.values.get('RecordingSid', '')
+    status = request.values.get('RecordingStatus', '')
+
+    print(f"Recording {recording_sid} status: {status}")
+    return "OK", 200
 
 @app.route('/twilio/menu', methods=['POST'])
 def handle_menu():
