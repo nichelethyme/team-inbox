@@ -585,10 +585,13 @@ def handle_recording():
             return helpful_response, 200, {'Content-Type': 'application/xml'}
 
         if recording_url and recording_sid:
+            print(f"✅ Both URL and SID exist - proceeding with upload")
             filename = f"call_recording_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
 
             # Upload to S3
+            print(f"📤 Attempting S3 upload...")
             s3_url = upload_to_s3(recording_url, filename)
+            print(f"📤 S3 upload result: {s3_url}")
 
             if s3_url:
                 # Detect sender and organize by date
@@ -617,6 +620,23 @@ def handle_recording():
     <Hangup/>
 </Response>'''
                 return confirmation, 200, {'Content-Type': 'application/xml'}
+            else:
+                print("❌ S3 upload failed")
+
+                # Return error TwiML
+                error_response = '''<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Sorry, there was an error saving your recording. Goodbye.</Say>
+    <Hangup/>
+</Response>'''
+                return error_response, 200, {'Content-Type': 'application/xml'}
+
+        # This should never be reached if logic above is correct
+        print("⚠️  UNEXPECTED: Reached end of function - this shouldn't happen!")
+        print(f"Debug - recording_url: '{recording_url}'")
+        print(f"Debug - recording_sid: '{recording_sid}'")
+        print(f"Debug - has URL: {bool(recording_url)}")
+        print(f"Debug - has SID: {bool(recording_sid)}")
 
         # If no recording URL, just hang up
         hangup = '''<?xml version="1.0" encoding="UTF-8"?>
