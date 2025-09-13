@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: ladyembersongs
+    name: team-inbox
     env: python
     buildCommand: |
       apt-get update && apt-get install -y ffmpeg
@@ -12,7 +12,7 @@ services:
       - key: PORT
         fromService:
           type: web
-          name: ladyembersongs
+          name: team-inbox
           property: port
       - key: AWS_ACCESS_KEY_ID
         sync: false
