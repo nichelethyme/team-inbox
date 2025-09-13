@@ -165,10 +165,33 @@ function viewItem(id) {
 }
 
 function playAudio(url) {
+    console.log('Attempting to play audio:', url);
+
+    // Check if URL looks valid
+    if (!url || url === 'null' || url === 'undefined') {
+        alert('❌ Audio file not available');
+        return;
+    }
+
     const audio = new Audio(url);
+
+    audio.addEventListener('loadstart', () => {
+        console.log('Audio loading started');
+    });
+
+    audio.addEventListener('error', (error) => {
+        console.error('Audio error:', error);
+        console.error('Error details:', audio.error);
+        alert('❌ Unable to play audio. The file may be expired or unavailable.');
+    });
+
+    audio.addEventListener('canplay', () => {
+        console.log('Audio ready to play');
+    });
+
     audio.play().catch(error => {
         console.error('Audio playback error:', error);
-        alert('Unable to play audio. Check S3 URL permissions.');
+        alert('❌ Audio playback failed. The signed URL may have expired.');
     });
 }
 

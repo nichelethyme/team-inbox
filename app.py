@@ -386,17 +386,32 @@ def refresh_url(item_id):
         item = c.fetchone()
 
         if item and item['s3_url']:
-            # Extract S3 key from the stored URL
-            import urllib.parse
-            parsed = urllib.parse.urlparse(item['s3_url'])
-            s3_key = parsed.path.lstrip('/')
+            try:
+                # Extract S3 key from the stored URL
+                import urllib.parse
+                parsed = urllib.parse.urlparse(item['s3_url'])
 
-            # Generate new signed URL
-            new_url = s3_client.generate_presigned_url(
-                'get_object',
-                Params={'Bucket': AWS_BUCKET_NAME, 'Key': s3_key},
-                ExpiresIn=86400  # 24 hours
-            )
+                # Handle both old format and new signed URLs
+                if 'amazonaws.com' in parsed.netloc:
+                    # Extract key from path, removing leading slash
+                    s3_key = parsed.path.lstrip('/')
+
+                    # Remove bucket name if it's in the path (for old URLs)
+                    if s3_key.startswith(f"{AWS_BUCKET_NAME}/"):
+                        s3_key = s3_key[len(f"{AWS_BUCKET_NAME}/"):]
+                else:
+                    # If URL format is unexpected, try using content field as fallback
+                    s3_key = f"recordings/{datetime.now().strftime('%Y/%m/%d')}/unknown_file.wav"
+
+                # Generate new signed URL
+                new_url = s3_client.generate_presigned_url(
+                    'get_object',
+                    Params={'Bucket': AWS_BUCKET_NAME, 'Key': s3_key},
+                    ExpiresIn=86400  # 24 hours
+                )
+            except Exception as parse_error:
+                print(f"URL parsing error: {parse_error}")
+                return jsonify({'success': False, 'error': f'Invalid URL format: {parse_error}'})
 
             return jsonify({'success': True, 'url': new_url})
 
@@ -739,7 +754,7 @@ def detect_sender_name(phone_number):
     phone_map = {
         # Team phone numbers
         '+16783614280': 'Asia',      # Asia's personal number
-        '+17707582471': 'Twilio',    # Your Twilio number (for testing)
+        '+17707582471': 'Asia',      # Twilio number (770) 758-2471
         # Add more team members like:
         # '+15551234567': 'Sebastian',
         # '+15559876543': 'TeamMember3',
