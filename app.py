@@ -629,7 +629,7 @@ def handle_recording_status():
 def test_version():
     """Test endpoint to verify deployment version"""
     return jsonify({
-        'version': '2025-09-13-v4',
+        'version': '2025-09-13-v5',
         'message': 'Latest code deployed successfully',
         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')
     })
