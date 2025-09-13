@@ -506,20 +506,26 @@ def handle_incoming_call():
 def handle_recording():
     """Process completed recording and save to S3"""
     try:
-        print("📥 Recording webhook received")
-        print(f"Request data: {dict(request.values)}")
+        # Always save a record first so we can see the webhook was called
+        sender_name = detect_sender_name(request.values.get('From', ''))
+        date_folder = datetime.now().strftime('%Y-%m-%d')
+
+        conn = sqlite3.connect('songs.db')
+        c = conn.cursor()
+        c.execute("""INSERT INTO inbox
+                     (sender_name, sender_phone, content_type, title, content, s3_url, date_folder)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                  (sender_name, request.values.get('From', ''), 'voice',
+                   f"{sender_name} - Processing Recording", "Recording webhook received - processing...", None, date_folder))
+        webhook_record_id = c.lastrowid
+        conn.commit()
+        conn.close()
 
         recording_url = request.values.get('RecordingUrl', '')
         recording_sid = request.values.get('RecordingSid', '')
         call_sid = request.values.get('CallSid', '')
         from_number = request.values.get('From', '')
         recording_duration = request.values.get('RecordingDuration', '0')
-
-        print(f"🎤 Recording details:")
-        print(f"  - URL: {recording_url}")
-        print(f"  - SID: {recording_sid}")
-        print(f"  - Duration: {recording_duration} seconds")
-        print(f"  - From: {from_number}")
 
         # Handle case where recording was too short or silent
         if not recording_url:
@@ -557,19 +563,16 @@ def handle_recording():
             print(f"📤 S3 upload result: {s3_url}")
 
             if s3_url:
-                # Detect sender and organize by date
-                sender_name = detect_sender_name(from_number)
-                date_folder = datetime.now().strftime('%Y-%m-%d')
+                # Update the existing record with success info
                 title = f"{sender_name} - Voice {datetime.now().strftime('%H:%M')}"
 
-                # Save to inbox system
                 conn = sqlite3.connect('songs.db')
                 c = conn.cursor()
 
-                c.execute("""INSERT INTO inbox
-                             (sender_name, sender_phone, content_type, title, content, s3_url, date_folder)
-                             VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                          (sender_name, from_number, 'voice', title, f"Voice recording - {filename}", s3_url, date_folder))
+                c.execute("""UPDATE inbox
+                             SET title = ?, content = ?, s3_url = ?
+                             WHERE id = ?""",
+                          (title, f"Voice recording - {filename}", s3_url, webhook_record_id))
 
                 conn.commit()
                 conn.close()
@@ -585,6 +588,16 @@ def handle_recording():
                 return confirmation, 200, {'Content-Type': 'application/xml'}
             else:
                 print("❌ S3 upload failed")
+
+                # Update record with failure info
+                conn = sqlite3.connect('songs.db')
+                c = conn.cursor()
+                c.execute("""UPDATE inbox
+                             SET title = ?, content = ?
+                             WHERE id = ?""",
+                          (f"{sender_name} - Upload Failed", f"Recording received but S3 upload failed (duration: {recording_duration}s)", webhook_record_id))
+                conn.commit()
+                conn.close()
 
                 # Return error TwiML
                 error_response = '''<?xml version="1.0" encoding="UTF-8"?>
