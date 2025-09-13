@@ -6,3 +6,7 @@ requests==2.31.0
 boto3==1.26.137
 twilio==8.2.0
 python-dotenv==1.0.0
+librosa==0.10.1
+soundfile==0.12.1
+numpy==1.24.3
+scipy==1.10.1

@@ -791,11 +791,395 @@ def handle_recording_status():
 
     return "OK", 200
 
+@app.route('/twilio/sms', methods=['POST'])
+def handle_sms():
+    """Handle incoming SMS and MMS messages with voice message support"""
+    from_number = request.values.get('From', '')
+    body = request.values.get('Body', '')
+    num_media = int(request.values.get('NumMedia', 0))
+
+    sender_name = detect_sender_name(from_number)
+    print(f"📱 SMS/MMS from {sender_name}: {body} (Media: {num_media})")
+
+    if num_media > 0:
+        # Handle MMS with media attachments
+        for i in range(num_media):
+            media_url = request.values.get(f'MediaUrl{i}', '')
+            media_content_type = request.values.get(f'MediaContentType{i}', '')
+
+            # Check if it's an audio file
+            if media_content_type and media_content_type.startswith('audio/'):
+                try:
+                    file_extension = '.m4a' if 'mp4' in media_content_type else '.wav'
+                    filename = f"mms_audio_{datetime.now().strftime('%Y%m%d_%H%M%S')}{file_extension}"
+
+                    s3_url = upload_to_s3(media_url, filename)
+
+                    if s3_url:
+                        conn = sqlite3.connect('songs.db')
+                        c = conn.cursor()
+                        c.execute("""INSERT INTO inbox
+                                     (sender_name, sender_phone, content_type, title, content, s3_url, date_folder)
+                                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                                  (sender_name, from_number, 'voice',
+                                   f"{sender_name} - Voice Message {datetime.now().strftime('%H:%M')}",
+                                   f"Voice message via MMS{' - ' + body if body else ''}",
+                                   s3_url, datetime.now().strftime('%Y-%m-%d')))
+                        conn.commit()
+                        conn.close()
+                        print(f"🎤 Voice message from {sender_name}: {filename}")
+                except Exception as e:
+                    print(f"❌ MMS audio error: {e}")
+
+    # Handle text part if present
+    if body:
+        conn = sqlite3.connect('songs.db')
+        c = conn.cursor()
+        c.execute("""INSERT INTO inbox
+                     (sender_name, sender_phone, content_type, title, content, date_folder)
+                     VALUES (?, ?, ?, ?, ?, ?)""",
+                  (sender_name, from_number, 'text',
+                   f"{sender_name} - Text {datetime.now().strftime('%H:%M')}",
+                   body, datetime.now().strftime('%Y-%m-%d')))
+        conn.commit()
+        conn.close()
+
+    return "OK", 200
+
+@app.route('/api/analyze-audio', methods=['POST'])
+def analyze_audio():
+    """Analyze audio for pitch, key detection, and frequency content (Melodyne-style)"""
+    try:
+        import numpy as np
+        import scipy.signal
+        import librosa
+        import tempfile
+        import requests
+
+        data = request.json
+        audio_url = data.get('audio_url')
+        analysis_type = data.get('analysis_type', 'full')  # 'pitch', 'key', 'full'
+
+        if not audio_url:
+            return jsonify({'success': False, 'error': 'No audio URL provided'}), 400
+
+        # Download audio file to temporary location
+        response = requests.get(audio_url, timeout=30)
+        if response.status_code != 200:
+            return jsonify({'success': False, 'error': 'Failed to download audio'}), 400
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_file:
+            temp_file.write(response.content)
+            temp_path = temp_file.name
+
+        try:
+            # Load audio with librosa (handles various formats)
+            y, sr = librosa.load(temp_path)
+
+            results = {}
+
+            # Pitch tracking (fundamental frequency over time)
+            if analysis_type in ['pitch', 'full']:
+                pitches, magnitudes = librosa.piptrack(y=y, sr=sr, threshold=0.1)
+
+                # Extract fundamental frequency over time
+                pitch_track = []
+                times = librosa.frames_to_time(np.arange(pitches.shape[1]), sr=sr)
+
+                for t in range(pitches.shape[1]):
+                    index = magnitudes[:, t].argmax()
+                    pitch = pitches[index, t]
+
+                    if pitch > 0:
+                        # Convert Hz to MIDI note
+                        midi_note = librosa.hz_to_midi(pitch)
+                        note_name = librosa.midi_to_note(midi_note)
+                        pitch_track.append({
+                            'time': float(times[t]),
+                            'frequency': float(pitch),
+                            'midi_note': float(midi_note),
+                            'note_name': note_name,
+                            'confidence': float(magnitudes[index, t])
+                        })
+
+                results['pitch_track'] = pitch_track
+
+            # Key detection
+            if analysis_type in ['key', 'full']:
+                # Use chroma features for key detection
+                chroma = librosa.feature.chroma_stft(y=y, sr=sr)
+                chroma_mean = np.mean(chroma, axis=1)
+
+                # Simple key detection using chroma vector correlation
+                key_profiles = {
+                    'C': [1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1],
+                    'C#': [1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0],
+                    'D': [0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1],
+                    'D#': [1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0],
+                    'E': [0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1],
+                    'F': [1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0],
+                    'F#': [0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1],
+                    'G': [1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1],
+                    'G#': [1, 1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0],
+                    'A': [0, 1, 1, 0, 1, 0, 1, 0, 1, 1, 0, 1],
+                    'A#': [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 1, 0],
+                    'B': [0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 1]
+                }
+
+                correlations = {}
+                for key, profile in key_profiles.items():
+                    correlation = np.corrcoef(chroma_mean, profile)[0, 1]
+                    correlations[key] = float(correlation) if not np.isnan(correlation) else 0
+
+                detected_key = max(correlations, key=correlations.get)
+                key_confidence = correlations[detected_key]
+
+                results['key_detection'] = {
+                    'detected_key': detected_key,
+                    'confidence': key_confidence,
+                    'all_correlations': correlations
+                }
+
+            # Spectral analysis
+            if analysis_type in ['spectral', 'full']:
+                # Get spectral features
+                spectral_centroids = librosa.feature.spectral_centroid(y=y, sr=sr)[0]
+                spectral_rolloff = librosa.feature.spectral_rolloff(y=y, sr=sr)[0]
+                mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+
+                results['spectral_analysis'] = {
+                    'spectral_centroid_mean': float(np.mean(spectral_centroids)),
+                    'spectral_rolloff_mean': float(np.mean(spectral_rolloff)),
+                    'mfcc_features': mfccs.tolist(),
+                    'tempo': float(librosa.beat.tempo(y=y, sr=sr)[0]),
+                    'duration': float(len(y) / sr)
+                }
+
+            # Clean up temp file
+            import os
+            os.unlink(temp_path)
+
+            return jsonify({
+                'success': True,
+                'analysis_results': results,
+                'sample_rate': sr,
+                'duration': float(len(y) / sr)
+            })
+
+        except Exception as analysis_error:
+            import os
+            os.unlink(temp_path)
+            raise analysis_error
+
+    except Exception as e:
+        print(f"❌ Audio analysis error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/transpose-audio', methods=['POST'])
+def transpose_audio():
+    """Transpose audio to a different key (pitch shifting)"""
+    try:
+        import librosa
+        import soundfile as sf
+        import tempfile
+        import requests
+
+        data = request.json
+        audio_url = data.get('audio_url')
+        semitones = float(data.get('semitones', 0))  # Number of semitones to transpose
+
+        if not audio_url:
+            return jsonify({'success': False, 'error': 'No audio URL provided'}), 400
+
+        # Download original audio
+        response = requests.get(audio_url, timeout=30)
+        if response.status_code != 200:
+            return jsonify({'success': False, 'error': 'Failed to download audio'}), 400
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_input:
+            temp_input.write(response.content)
+            input_path = temp_input.name
+
+        # Load audio
+        y, sr = librosa.load(input_path)
+
+        # Apply pitch shifting
+        y_shifted = librosa.effects.pitch_shift(y, sr=sr, n_steps=semitones)
+
+        # Save transposed audio to temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_output:
+            output_path = temp_output.name
+
+        sf.write(output_path, y_shifted, sr)
+
+        # Upload transposed audio to S3
+        with open(output_path, 'rb') as f:
+            transposed_data = f.read()
+
+        from datetime import datetime
+        filename = f"transposed_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{semitones}st.wav"
+
+        # Upload to S3 using existing infrastructure
+        s3_client = boto3.client(
+            's3',
+            aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
+            aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
+            region_name=os.environ.get('AWS_REGION', 'us-east-1')
+        )
+
+        aws_bucket = os.environ.get('AWS_BUCKET_NAME')
+        date_folder = datetime.now().strftime('%Y-%m-%d')
+        s3_key = f"recordings/{date_folder}/transposed_{filename}"
+
+        s3_client.put_object(
+            Bucket=aws_bucket,
+            Key=s3_key,
+            Body=transposed_data,
+            ContentType='audio/wav'
+        )
+
+        # Generate signed URL
+        signed_url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': aws_bucket, 'Key': s3_key},
+            ExpiresIn=3600
+        )
+
+        # Clean up temp files
+        import os
+        os.unlink(input_path)
+        os.unlink(output_path)
+
+        return jsonify({
+            'success': True,
+            'transposed_url': signed_url,
+            'original_semitones': semitones,
+            'filename': filename
+        })
+
+    except Exception as e:
+        print(f"❌ Audio transpose error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/import/s3-zip', methods=['POST'])
+def import_s3_zip():
+    """Import audio files from S3 zip archive"""
+    try:
+        import zipfile
+        import tempfile
+        import os
+        from datetime import datetime
+
+        # Get S3 zip file path from request
+        zip_key = request.json.get('zip_key', 'your-zip-file.zip')
+
+        print(f"📦 Starting S3 zip import: {zip_key}")
+
+        # Download zip from S3
+        s3_client = boto3.client(
+            's3',
+            aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
+            aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
+            region_name=os.environ.get('AWS_REGION', 'us-east-1')
+        )
+
+        aws_bucket = os.environ.get('AWS_BUCKET_NAME')
+
+        # Download zip to temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as temp_zip:
+            print(f"📥 Downloading {zip_key} from S3...")
+            s3_client.download_fileobj(aws_bucket, zip_key, temp_zip)
+            temp_zip_path = temp_zip.name
+
+        imported_count = 0
+        skipped_count = 0
+
+        # Extract and process audio files
+        with zipfile.ZipFile(temp_zip_path, 'r') as zip_ref:
+            for file_info in zip_ref.filelist:
+                if not file_info.filename.lower().endswith(('.mp3', '.wav', '.m4a', '.flac', '.ogg')):
+                    continue
+
+                try:
+                    # Extract file to temporary location
+                    with zip_ref.open(file_info) as zip_file:
+                        audio_data = zip_file.read()
+
+                    # Generate new filename and S3 key
+                    original_name = os.path.basename(file_info.filename)
+                    date_folder = datetime.now().strftime('%Y-%m-%d')
+                    s3_key = f"recordings/{date_folder}/imported_{original_name}"
+
+                    # Upload to S3
+                    s3_client.put_object(
+                        Bucket=aws_bucket,
+                        Key=s3_key,
+                        Body=audio_data,
+                        ContentType='audio/mpeg' if original_name.lower().endswith('.mp3') else 'audio/wav'
+                    )
+
+                    # Generate signed URL
+                    signed_url = s3_client.generate_presigned_url(
+                        'get_object',
+                        Params={'Bucket': aws_bucket, 'Key': s3_key},
+                        ExpiresIn=3600
+                    )
+
+                    # Create database record
+                    conn = sqlite3.connect('songs.db')
+                    c = conn.cursor()
+                    c.execute("""INSERT INTO inbox
+                                 (sender_name, sender_phone, content_type, title, content, s3_url, date_folder)
+                                 VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                              ('Lady Ember', 'IMPORTED', 'voice',
+                               f"Imported: {original_name}",
+                               f"Imported from zip archive - {original_name}",
+                               signed_url, date_folder))
+                    conn.commit()
+                    conn.close()
+
+                    imported_count += 1
+                    print(f"✅ Imported: {original_name}")
+
+                except Exception as e:
+                    print(f"❌ Failed to import {file_info.filename}: {e}")
+                    skipped_count += 1
+                    continue
+
+        # Clean up temp file
+        os.unlink(temp_zip_path)
+
+        return jsonify({
+            'success': True,
+            'imported_count': imported_count,
+            'skipped_count': skipped_count,
+            'message': f'Successfully imported {imported_count} audio files'
+        })
+
+    except Exception as e:
+        print(f"❌ S3 zip import error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 @app.route('/test/version', methods=['GET'])
 def test_version():
     """Test endpoint to verify deployment version"""
     return jsonify({
-        'version': '2025-09-13-v5',
+        'version': '2025-09-13-v6',
         'message': 'Latest code deployed successfully',
         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')
     })
