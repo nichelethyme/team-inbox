@@ -634,6 +634,68 @@ def test_version():
         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')
     })
 
+@app.route('/test/upload', methods=['GET'])
+def test_upload():
+    """Test S3 upload with a dummy file"""
+    try:
+        # Test with a simple text file
+        test_content = b"Test recording file"
+        filename = f"test_recording_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+
+        # Get AWS credentials
+        aws_access_key = os.environ.get('AWS_ACCESS_KEY_ID')
+        aws_secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
+        aws_bucket = os.environ.get('AWS_BUCKET_NAME')
+        aws_region = os.environ.get('AWS_REGION', 'us-east-1')
+
+        if not all([aws_access_key, aws_secret_key, aws_bucket]):
+            return jsonify({
+                'success': False,
+                'error': 'Missing AWS credentials'
+            })
+
+        # Create S3 client
+        s3_client = boto3.client(
+            's3',
+            aws_access_key_id=aws_access_key,
+            aws_secret_access_key=aws_secret_key,
+            region_name=aws_region
+        )
+
+        # Create S3 key with folder structure
+        date_folder = datetime.now().strftime('%Y-%m-%d')
+        s3_key = f"recordings/{date_folder}/{filename}"
+
+        # Upload test file
+        s3_client.put_object(
+            Bucket=aws_bucket,
+            Key=s3_key,
+            Body=test_content,
+            ContentType='text/plain'
+        )
+
+        # Generate signed URL
+        signed_url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': aws_bucket, 'Key': s3_key},
+            ExpiresIn=3600
+        )
+
+        return jsonify({
+            'success': True,
+            'message': 'Test upload successful',
+            'bucket': aws_bucket,
+            's3_key': s3_key,
+            'signed_url': signed_url
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'error_type': type(e).__name__
+        })
+
 @app.route('/test/aws', methods=['GET'])
 def test_aws_connection():
     """Test endpoint to verify AWS S3 connection"""
