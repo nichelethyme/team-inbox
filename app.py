@@ -699,11 +699,96 @@ def handle_recording():
 
 @app.route('/twilio/recording-status', methods=['POST'])
 def handle_recording_status():
-    """Handle recording status updates"""
+    """Handle recording status updates and process completed recordings"""
     recording_sid = request.values.get('RecordingSid', '')
     status = request.values.get('RecordingStatus', '')
+    recording_url = request.values.get('RecordingUrl', '')
+    call_sid = request.values.get('CallSid', '')
+    from_number = request.values.get('From', '')
+    recording_duration = request.values.get('RecordingDuration', '0')
 
-    print(f"Recording {recording_sid} status: {status}")
+    print(f"📻 Recording {recording_sid} status: {status}")
+    print(f"📻 Recording URL: {recording_url}")
+    print(f"📻 Duration: {recording_duration}s")
+
+    if status == 'completed' and recording_url and recording_sid:
+        try:
+            # Get sender info
+            sender_name = detect_sender_name(from_number)
+            date_folder = datetime.now().strftime('%Y-%m-%d')
+
+            # Create database record first
+            conn = sqlite3.connect('songs.db')
+            c = conn.cursor()
+            c.execute("""INSERT INTO inbox
+                         (sender_name, sender_phone, content_type, title, content, s3_url, date_folder)
+                         VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                      (sender_name, from_number, 'voice',
+                       f"{sender_name} - Processing Recording", "Recording status webhook received - processing...", None, date_folder))
+            webhook_record_id = c.lastrowid
+            conn.commit()
+            conn.close()
+
+            print(f"✅ Created database record {webhook_record_id}")
+
+            # Generate filename
+            filename = f"call_recording_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
+
+            # Add .wav extension to Twilio URL for proper download
+            if not recording_url.endswith('.wav'):
+                download_url = recording_url + '.wav'
+                print(f"📤 Using download URL: {download_url}")
+            else:
+                download_url = recording_url
+                print(f"📤 Using original URL: {download_url}")
+
+            print(f"📤 Attempting S3 upload...")
+            s3_url = upload_to_s3(download_url, filename)
+            print(f"📤 S3 upload result: {s3_url}")
+
+            if s3_url:
+                # Update the existing record with success info
+                title = f"{sender_name} - Voice {datetime.now().strftime('%H:%M')}"
+
+                conn = sqlite3.connect('songs.db')
+                c = conn.cursor()
+
+                c.execute("""UPDATE inbox
+                             SET title = ?, content = ?, s3_url = ?
+                             WHERE id = ?""",
+                          (title, f"Voice recording - {filename}", s3_url, webhook_record_id))
+
+                conn.commit()
+                conn.close()
+
+                print(f"🎤 Voice recording from {sender_name}: {filename} -> {s3_url}")
+                return "SUCCESS: Recording uploaded to S3", 200
+
+            else:
+                # Upload failed - update record with error
+                conn = sqlite3.connect('songs.db')
+                c = conn.cursor()
+
+                # Get the last error
+                error_msg = last_download_error if last_download_error else "Upload failed - unknown error"
+
+                c.execute("""UPDATE inbox
+                             SET title = ?, content = ?
+                             WHERE id = ?""",
+                          (f"{sender_name} - Upload Failed", f"S3 upload failed. Error: {error_msg}", webhook_record_id))
+
+                conn.commit()
+                conn.close()
+
+                print(f"❌ S3 upload failed for {sender_name}: {error_msg}")
+                return f"FAILED: Upload error - {error_msg}", 200
+
+        except Exception as e:
+            print(f"❌ Recording status processing error: {e}")
+            import traceback
+            traceback.print_exc()
+            return f"ERROR: {str(e)}", 200
+
     return "OK", 200
 
 @app.route('/test/version', methods=['GET'])
@@ -1127,11 +1212,12 @@ def upload_to_s3(file_url, filename):
 
         return None
 
-        # Create S3 key with folder structure: recordings/YYYY-MM-DD/filename
-        date_folder = datetime.now().strftime('%Y-%m-%d')
-        s3_key = f"recordings/{date_folder}/{filename}"
+    # Create S3 key with folder structure: recordings/YYYY-MM-DD/filename
+    date_folder = datetime.now().strftime('%Y-%m-%d')
+    s3_key = f"recordings/{date_folder}/{filename}"
 
-        # Upload to S3
+    # Upload to S3
+    try:
         print(f"📤 Uploading to S3: s3://{aws_bucket}/{s3_key}")
         s3_client.put_object(
             Bucket=aws_bucket,
