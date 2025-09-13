@@ -80,8 +80,27 @@ function renderInbox() {
 
             items.forEach(item => {
                 const time = new Date(item.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-                const icon = item.content_type === 'voice' ? '🎤' : '💬';
-                const bgColor = item.content_type === 'voice' ? 'var(--burgundy-muted)' : 'var(--bg-primary)';
+
+                // Determine icon and description based on content type
+                let icon, description, bgColor;
+                switch(item.content_type) {
+                    case 'voice':
+                        icon = '🎤';
+                        description = 'Voice recording';
+                        bgColor = 'var(--burgundy-muted)';
+                        break;
+                    case 'image':
+                        icon = '📷';
+                        description = 'Image attachment';
+                        bgColor = '#2a4a2a';
+                        break;
+                    case 'text':
+                    default:
+                        icon = '💬';
+                        description = 'Text message';
+                        bgColor = 'var(--bg-primary)';
+                        break;
+                }
 
                 html += `
                     <div style="background: ${bgColor}; padding: 15px; border: 1px solid var(--border-color); cursor: pointer;" onclick="viewItem(${item.id})">
@@ -91,7 +110,7 @@ function renderInbox() {
                                     ${icon} ${item.title}
                                 </div>
                                 <div style="color: var(--gray-medium); font-size: 0.9rem; margin-bottom: 8px;">
-                                    ${time} • ${item.content_type === 'voice' ? 'Voice recording' : 'Text message'}
+                                    ${time} • ${description}
                                 </div>
                                 ${item.content_type === 'text' ? `
                                     <div style="color: var(--gray-light); font-size: 0.9rem; line-height: 1.4; max-height: 60px; overflow: hidden;">
@@ -102,6 +121,9 @@ function renderInbox() {
                             <div style="display: flex; gap: 8px;">
                                 ${item.content_type === 'voice' && item.s3_url ? `
                                     <button class="btn-small" onclick="event.stopPropagation(); playAudio('${item.s3_url}')" style="padding: 6px 12px;">▶️</button>
+                                ` : ''}
+                                ${item.content_type === 'image' && item.s3_url ? `
+                                    <button class="btn-small" onclick="event.stopPropagation(); viewImage('${item.s3_url}')" style="padding: 6px 12px;">🖼️</button>
                                 ` : ''}
                                 <button class="btn-small" onclick="event.stopPropagation(); deleteItem(${item.id})" style="padding: 6px 12px; background: #dc3545;">🗑️</button>
                             </div>
@@ -148,6 +170,11 @@ function playAudio(url) {
         console.error('Audio playback error:', error);
         alert('Unable to play audio. Check S3 URL permissions.');
     });
+}
+
+function viewImage(url) {
+    // Open image in new window
+    window.open(url, '_blank');
 }
 
 function deleteItem(id) {

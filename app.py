@@ -375,6 +375,26 @@ def delete_inbox_item(item_id):
         print(f"Delete error: {e}")
         return jsonify({'success': False, 'error': str(e)})
 
+@app.route('/api/test-aws')
+def test_aws():
+    """Test AWS S3 connection"""
+    try:
+        # Test S3 connection by listing bucket
+        response = s3_client.list_objects_v2(Bucket=AWS_BUCKET_NAME, MaxKeys=1)
+
+        return jsonify({
+            'success': True,
+            'bucket': AWS_BUCKET_NAME,
+            'accessible': True,
+            'objects_found': response.get('KeyCount', 0)
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'bucket': AWS_BUCKET_NAME
+        })
+
 @app.route('/api/debug_song/<int:song_id>')
 def debug_song(song_id):
     """Debug endpoint to see what's actually saved"""
@@ -417,8 +437,16 @@ s3_client = boto3.client(
 def upload_to_s3(file_url, filename):
     """Download recording from Twilio and upload to S3"""
     try:
-        # Download from Twilio
-        with urllib.request.urlopen(file_url) as response:
+        # Create authenticated request for Twilio recording
+        import base64
+        auth_string = f"{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}"
+        base64_auth = base64.b64encode(auth_string.encode()).decode()
+
+        request = urllib.request.Request(file_url)
+        request.add_header("Authorization", f"Basic {base64_auth}")
+
+        # Download from Twilio with authentication
+        with urllib.request.urlopen(request) as response:
             audio_data = response.read()
 
         # Upload to S3
@@ -591,46 +619,85 @@ def handle_recording_status():
 
 @app.route('/twilio/sms', methods=['POST'])
 def handle_sms():
-    """Handle incoming SMS messages - Simple inbox system"""
+    """Handle incoming SMS/MMS messages - Simple inbox system"""
     try:
         message_body = request.values.get('Body', '')
         from_number = request.values.get('From', '')
+        num_media = int(request.values.get('NumMedia', '0'))
 
+        # Detect sender name from phone number
+        sender_name = detect_sender_name(from_number)
+
+        # Organize by sender/date
+        date_folder = datetime.now().strftime('%Y-%m-%d')
+
+        conn = sqlite3.connect('songs.db')
+        c = conn.cursor()
+
+        # Handle media attachments (voice memos, images, etc.)
+        if num_media > 0:
+            for i in range(num_media):
+                media_url = request.values.get(f'MediaUrl{i}', '')
+                media_type = request.values.get(f'MediaContentType{i}', '')
+
+                if media_url and media_type:
+                    print(f"📎 Media attachment from {sender_name}: {media_type}")
+
+                    if media_type.startswith('audio/'):
+                        # Handle voice memo
+                        filename = f"voice_memo_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{i}.{media_type.split('/')[-1]}"
+                        s3_url = upload_to_s3(media_url, filename)
+
+                        title = f"{sender_name} - Voice Memo {datetime.now().strftime('%H:%M')}"
+                        content = f"Voice memo attachment - {filename}"
+
+                        c.execute("""INSERT INTO inbox
+                                     (sender_name, sender_phone, content_type, title, content, s3_url, date_folder)
+                                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                                  (sender_name, from_number, 'voice', title, content, s3_url, date_folder))
+
+                        print(f"🎤 Voice memo from {sender_name} saved to S3: {s3_url}")
+
+                    elif media_type.startswith('image/'):
+                        # Handle image attachment
+                        filename = f"image_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{i}.{media_type.split('/')[-1]}"
+                        s3_url = upload_to_s3(media_url, filename)
+
+                        title = f"{sender_name} - Image {datetime.now().strftime('%H:%M')}"
+                        content = f"Image attachment - {filename}"
+
+                        c.execute("""INSERT INTO inbox
+                                     (sender_name, sender_phone, content_type, title, content, s3_url, date_folder)
+                                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                                  (sender_name, from_number, 'image', title, content, s3_url, date_folder))
+
+                        print(f"📷 Image from {sender_name} saved to S3: {s3_url}")
+
+        # Handle text message (if any)
         if message_body.strip():
-            # Detect sender name from phone number
-            sender_name = detect_sender_name(from_number)
-
-            # Organize by sender/date
-            date_folder = datetime.now().strftime('%Y-%m-%d')
             title = f"{sender_name} - {datetime.now().strftime('%H:%M')}"
-
-            # Save to database with sender info
-            conn = sqlite3.connect('songs.db')
-            c = conn.cursor()
 
             c.execute("""INSERT INTO inbox
                          (sender_name, sender_phone, content_type, title, content, date_folder)
                          VALUES (?, ?, ?, ?, ?, ?)""",
                       (sender_name, from_number, 'text', title, message_body, date_folder))
 
-            conn.commit()
-            conn.close()
+            print(f"💬 SMS from {sender_name}: {message_body[:50]}...")
 
-            print(f"📱 SMS from {sender_name}: {message_body[:50]}...")
+        conn.commit()
+        conn.close()
 
-            response = '''<?xml version="1.0" encoding="UTF-8"?>
+        response = '''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Message>📥 Got it! Saved to your inbox.</Message>
 </Response>'''
 
-            return response, 200, {'Content-Type': 'application/xml'}
-
-        return "No message", 400
+        return response, 200, {'Content-Type': 'application/xml'}
 
     except Exception as e:
-        print(f"SMS error: {e}")
+        print(f"SMS/MMS error: {e}")
         traceback.print_exc()
-        return "Error processing SMS", 500
+        return "Error processing message", 500
 
 def detect_sender_name(phone_number):
     """Detect sender name from phone number - you can customize this"""
