@@ -709,6 +709,54 @@ def test_upload():
             'error_type': type(e).__name__
         })
 
+@app.route('/test/twilio', methods=['GET'])
+def test_twilio_download():
+    """Test downloading from a Twilio recording URL"""
+    try:
+        # Use a test recording URL - replace with actual recording SID
+        account_sid = os.environ.get('TWILIO_ACCOUNT_SID', 'ACCOUNT_SID')
+        recording_sid = request.args.get('recording_sid', 'RE5334e512a3bb05850b3018595ac15847')
+        test_recording_url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Recordings/{recording_sid}"
+
+        # Get Twilio credentials
+        twilio_account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
+        twilio_auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
+
+        if not all([twilio_account_sid, twilio_auth_token]):
+            return jsonify({
+                'success': False,
+                'error': 'Missing Twilio credentials'
+            })
+
+        # Create authenticated request
+        import base64
+        auth_string = f"{twilio_account_sid}:{twilio_auth_token}"
+        base64_auth = base64.b64encode(auth_string.encode()).decode()
+
+        request = urllib.request.Request(test_recording_url)
+        request.add_header("Authorization", f"Basic {base64_auth}")
+
+        # Try to download
+        with urllib.request.urlopen(request) as response:
+            data = response.read()
+            content_type = response.headers.get('Content-Type', 'unknown')
+
+        return jsonify({
+            'success': True,
+            'message': 'Twilio download successful',
+            'data_size': len(data),
+            'content_type': content_type,
+            'url_tested': test_recording_url
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'error_type': type(e).__name__,
+            'url_tested': test_recording_url if 'test_recording_url' in locals() else 'N/A'
+        })
+
 @app.route('/test/aws', methods=['GET'])
 def test_aws_connection():
     """Test endpoint to verify AWS S3 connection"""
