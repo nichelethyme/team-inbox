@@ -485,13 +485,47 @@ s3_client = boto3.client(
 
 @app.route('/twilio/voice', methods=['POST'])
 def handle_incoming_call():
-    """Handle incoming Twilio voice calls"""
+    """Handle incoming Twilio voice calls with system check"""
     from_number = request.values.get('From', '')
-    
-    # Simple recording - no complex menu
+
+    # Test system before letting user record to avoid wasted time
+    try:
+        aws_access_key = os.environ.get('AWS_ACCESS_KEY_ID')
+        aws_secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
+        aws_bucket = os.environ.get('AWS_BUCKET_NAME')
+        twilio_account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
+        twilio_auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
+
+        if not all([aws_access_key, aws_secret_key, aws_bucket]):
+            # AWS not ready - inform caller and hang up immediately
+            twiml_response = '''<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Sorry, the system is temporarily unavailable. Please try again in a few minutes. Goodbye.</Say>
+    <Hangup/>
+</Response>'''
+            return twiml_response, 200, {'Content-Type': 'application/xml'}
+
+        if not all([twilio_account_sid, twilio_auth_token]):
+            twiml_response = '''<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Sorry, the recording system is temporarily unavailable. Please try again in a few minutes. Goodbye.</Say>
+    <Hangup/>
+</Response>'''
+            return twiml_response, 200, {'Content-Type': 'application/xml'}
+
+    except Exception as e:
+        # System error - don't let user waste time recording
+        twiml_response = '''<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Sorry, there's a system error. Please try again later. Goodbye.</Say>
+    <Hangup/>
+</Response>'''
+        return twiml_response, 200, {'Content-Type': 'application/xml'}
+
+    # System is ready - proceed with recording
     twiml_response = '''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice">Lady Ember Songs. Record at the beep. Press 1 when done.</Say>
+    <Say voice="alice">System ready! Record your message after the beep. Press 1 when done.</Say>
     <Record
         action="https://ladyember.com/twilio/recording"
         method="POST"
@@ -1022,19 +1056,43 @@ def upload_to_s3(file_url, filename):
 
         print(f"🔐 Attempting authenticated download from: {file_url[:80]}...")
 
-        # Download the file
-        try:
-            response = opener.open(file_url, timeout=45)
-            content_type = response.headers.get('Content-Type', 'unknown')
-            file_data = response.read()
-            print(f"✅ Downloaded {len(file_data)} bytes from Twilio (type: {content_type})")
+        # Download the file with retry for 404 errors (timing issue)
+        max_retries = 3
+        retry_delay = 2  # seconds
 
-            if len(file_data) < 1000:
-                print(f"⚠️  WARNING: File seems too small for audio: {len(file_data)} bytes")
+        for attempt in range(max_retries):
+            try:
+                print(f"📥 Download attempt {attempt + 1}/{max_retries}...")
+                response = opener.open(file_url, timeout=45)
+                content_type = response.headers.get('Content-Type', 'unknown')
+                file_data = response.read()
+                print(f"✅ Downloaded {len(file_data)} bytes from Twilio (type: {content_type})")
 
+                if len(file_data) < 1000:
+                    print(f"⚠️  WARNING: File seems too small for audio: {len(file_data)} bytes")
+
+                # Success - break out of retry loop
+                break
+
+            except urllib.error.HTTPError as http_error:
+                if http_error.code == 404 and attempt < max_retries - 1:
+                    # 404 error - recording might not be ready yet, wait and retry
+                    print(f"⏳ Recording not ready (404), waiting {retry_delay}s before retry {attempt + 2}...")
+                    import time
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                    continue
+                else:
+                    # Final attempt failed or non-404 error
+                    raise http_error
+            except Exception as download_error:
+                # Other non-HTTP errors
+                raise download_error
+
+        # If we get here, all retries failed
         except Exception as download_error:
             error_msg = f"{type(download_error).__name__}: {str(download_error)}"
-            print(f"❌ Twilio download failed: {error_msg}")
+            print(f"❌ Twilio download failed after {max_retries} attempts: {error_msg}")
 
             # Set the global error variable
             last_download_error = error_msg
@@ -1121,6 +1179,50 @@ def detect_sender_name(phone_number):
 
     # Default to last 4 digits if unknown
     return f"User-{clean_phone[-4:]}"
+
+@app.route('/api/fix-missing-recording', methods=['POST'])
+def fix_missing_recording():
+    """Add the missing recording that exists in S3 to the inbox"""
+    try:
+        # The S3 URL that exists but isn't in the inbox
+        s3_url = "https://ladyembertest1.s3.us-east-1.amazonaws.com/recordings/2025-09-13/call_recording_20250913_174113.wav"
+
+        conn = sqlite3.connect('songs.db')
+        c = conn.cursor()
+
+        # Check if this recording already exists in the inbox
+        c.execute("""SELECT id FROM inbox WHERE s3_url = ?""", (s3_url,))
+        existing = c.fetchone()
+
+        if existing:
+            conn.close()
+            return jsonify({
+                'success': False,
+                'message': f'Recording already exists in inbox with ID {existing[0]}'
+            })
+
+        # Add the missing recording to the inbox
+        c.execute("""INSERT INTO inbox
+                     (sender_name, sender_phone, content_type, title, content, s3_url, date_folder)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                  ("Asia", "+16783614280", "voice", "Asia - Voice 17:41",
+                   "Voice recording - call_recording_20250913_174113.wav", s3_url, "2025-09-13"))
+
+        new_record_id = c.lastrowid
+        conn.commit()
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'message': f'Added missing recording as record {new_record_id}',
+            's3_url': s3_url
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
 
 @app.route('/api/debug-upload', methods=['POST', 'GET'])
 def debug_upload():
