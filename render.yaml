@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: ladyembersongs
+    env: python
+    buildCommand: |
+      apt-get update && apt-get install -y ffmpeg
+      pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: PORT
+        fromService:
+          type: web
+          name: ladyembersongs
+          property: port
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_BUCKET_NAME
+        value: ladyembersongs-recordings
+      - key: AWS_REGION
+        value: us-east-1
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_PHONE_NUMBER
+        value: +17707582471
