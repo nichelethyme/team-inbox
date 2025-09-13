@@ -564,9 +564,16 @@ def handle_recording():
             print(f"✅ Both URL and SID exist - proceeding with upload")
             filename = f"call_recording_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
 
-            # Upload to S3
+            # Upload to S3 - Add .wav extension to Twilio URL for proper download
+            if not recording_url.endswith('.wav'):
+                download_url = recording_url + '.wav'
+                print(f"📤 Using download URL: {download_url}")
+            else:
+                download_url = recording_url
+                print(f"📤 Using original URL: {download_url}")
+
             print(f"📤 Attempting S3 upload...")
-            s3_url = upload_to_s3(recording_url, filename)
+            s3_url = upload_to_s3(download_url, filename)
             print(f"📤 S3 upload result: {s3_url}")
 
             if s3_url:
@@ -610,8 +617,19 @@ def handle_recording():
                 conn.commit()
                 conn.close()
 
-                # Return error TwiML with actual error spoken
-                error_to_speak = last_download_error if last_download_error else "Unknown error occurred"
+                # Get last error from database
+                error_to_speak = "Unknown error occurred"
+                try:
+                    conn = sqlite3.connect('songs.db')
+                    c = conn.cursor()
+                    c.execute("SELECT content FROM inbox WHERE id = 99999")
+                    result = c.fetchone()
+                    if result:
+                        error_to_speak = result[0]
+                    conn.close()
+                except:
+                    pass
+
                 error_response = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say voice="alice">Sorry, upload failed. Error: {error_to_speak}. Goodbye.</Say>
@@ -962,7 +980,9 @@ def upload_to_s3(file_url, filename):
         aws_region = os.environ.get('AWS_REGION', 'us-east-1')
 
         if not all([aws_access_key, aws_secret_key, aws_bucket]):
-            print("❌ Missing AWS credentials")
+            error_msg = "Missing AWS credentials"
+            print(f"❌ {error_msg}")
+            last_download_error = error_msg
             return None
 
         # Create S3 client
@@ -985,7 +1005,9 @@ def upload_to_s3(file_url, filename):
         twilio_auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
 
         if not all([twilio_account_sid, twilio_auth_token]):
-            print("❌ Missing Twilio credentials")
+            error_msg = "Missing Twilio credentials"
+            print(f"❌ {error_msg}")
+            last_download_error = error_msg
             return None
 
         # Create SSL context for HTTPS
@@ -1014,8 +1036,22 @@ def upload_to_s3(file_url, filename):
             error_msg = f"{type(download_error).__name__}: {str(download_error)}"
             print(f"❌ Twilio download failed: {error_msg}")
 
-            # Save error for voice feedback
+            # Set the global error variable
             last_download_error = error_msg
+
+            # Store error in database for cross-process access
+            try:
+                conn = sqlite3.connect('songs.db')
+                c = conn.cursor()
+                c.execute("""INSERT OR REPLACE INTO inbox
+                             (id, sender_name, sender_phone, content_type, title, content, s3_url, date_folder)
+                             VALUES (99999, 'SYSTEM', 'ERROR', 'error', 'Last Error', ?, NULL, ?)""",
+                          (error_msg, datetime.now().strftime('%Y-%m-%d')))
+                conn.commit()
+                conn.close()
+            except:
+                pass
+
             return None
 
         # Create S3 key with folder structure: recordings/YYYY-MM-DD/filename
@@ -1085,6 +1121,57 @@ def detect_sender_name(phone_number):
 
     # Default to last 4 digits if unknown
     return f"User-{clean_phone[-4:]}"
+
+@app.route('/api/debug-upload', methods=['POST', 'GET'])
+def debug_upload():
+    """Test endpoint to debug upload_to_s3 function"""
+    print("🔍 DEBUG: debug_upload endpoint called!")
+    if request.method == 'GET':
+        return jsonify({'message': 'debug endpoint is working', 'method': 'GET'})
+    try:
+        # Use a mock Twilio recording URL for testing (without .wav - like real webhook)
+        account_sid = os.environ.get('TWILIO_ACCOUNT_SID', 'TEST_ACCOUNT_SID')
+        test_base_url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Recordings/test"
+        test_url_with_wav = test_base_url + ".wav"
+        test_filename = f"test-{datetime.now().strftime('%Y%m%d-%H%M%S')}.wav"
+
+        print(f"🔍 Testing upload with URL: {test_url_with_wav}")
+        print(f"🔍 Testing upload with filename: {test_filename}")
+        print(f"🔍 About to call upload_to_s3...")
+
+        result = upload_to_s3(test_url_with_wav, test_filename)
+
+        print(f"🔍 upload_to_s3 returned: {result}")
+
+        # Also check AWS credentials
+        aws_access_key = os.environ.get('AWS_ACCESS_KEY_ID')
+        aws_secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
+        aws_bucket = os.environ.get('AWS_BUCKET_NAME')
+        twilio_account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
+        twilio_auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
+
+        return jsonify({
+            'success': bool(result),
+            'result': result,
+            'error': last_download_error if not result else None,
+            'test_url': test_url_with_wav,
+            'test_filename': test_filename,
+            'credentials_check': {
+                'has_aws_key': bool(aws_access_key),
+                'has_aws_secret': bool(aws_secret_key),
+                'has_aws_bucket': bool(aws_bucket),
+                'bucket_name': aws_bucket,
+                'has_twilio_sid': bool(twilio_account_sid),
+                'has_twilio_token': bool(twilio_auth_token)
+            }
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'error_type': type(e).__name__
+        })
 
 if __name__ == '__main__':
     # Initialize database on startup (safe for production - won't drop existing data)
