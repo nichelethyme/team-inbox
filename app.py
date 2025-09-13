@@ -509,6 +509,10 @@ def handle_incoming_call():
 def handle_recording():
     """Process completed recording and save to S3"""
     try:
+        # Clear any previous error
+        global last_download_error
+        last_download_error = None
+
         # Always save a record first so we can see the webhook was called
         sender_name = detect_sender_name(request.values.get('From', ''))
         date_folder = datetime.now().strftime('%Y-%m-%d')
@@ -964,6 +968,7 @@ def handle_sms():
 
 def upload_to_s3(file_url, filename):
     """Upload a file from URL to S3 bucket with proper authentication"""
+    global last_download_error
     try:
         # Get AWS credentials from environment
         aws_access_key = os.environ.get('AWS_ACCESS_KEY_ID')
@@ -1025,7 +1030,6 @@ def upload_to_s3(file_url, filename):
             print(f"❌ Twilio download failed: {error_msg}")
 
             # Save error for voice feedback
-            global last_download_error
             last_download_error = error_msg
             return None
 
@@ -1056,6 +1060,9 @@ def upload_to_s3(file_url, filename):
         error_msg = f"S3 upload error: {type(e).__name__}: {str(e)}"
         print(f"❌ {error_msg}")
         traceback.print_exc()
+
+        # Save error for voice feedback
+        last_download_error = error_msg
 
         # Save error to database for debugging
         try:
