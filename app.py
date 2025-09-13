@@ -490,11 +490,11 @@ def handle_incoming_call():
 <Response>
     <Say voice="alice">Lady Ember Songs. Record at the beep. Press 1 when done.</Say>
     <Record
-        action="/twilio/recording"
+        action="https://ladyember.com/twilio/recording"
         method="POST"
         maxLength="300"
         playBeep="true"
-        recordingStatusCallback="/twilio/recording-status"
+        recordingStatusCallback="https://ladyember.com/twilio/recording-status"
         timeout="30"
         finishOnKey="1"
     />
@@ -762,11 +762,11 @@ def handle_menu():
 <Response>
     <Say voice="alice">Starting new voice note.</Say>
     <Record 
-        action="/twilio/recording" 
+        action="https://ladyember.com/twilio/recording" 
         method="POST"
         maxLength="300"
         playBeep="true"
-        recordingStatusCallback="/twilio/recording-status"
+        recordingStatusCallback="https://ladyember.com/twilio/recording-status"
         timeout="10"
     />
     <Gather action="/twilio/menu" method="POST" numDigits="1" timeout="30">
@@ -790,11 +790,11 @@ def handle_menu():
 <Response>
     <Say voice="alice">Deleting previous recording. Starting fresh.</Say>
     <Record 
-        action="/twilio/recording" 
+        action="https://ladyember.com/twilio/recording" 
         method="POST"
         maxLength="300"
         playBeep="true"
-        recordingStatusCallback="/twilio/recording-status"
+        recordingStatusCallback="https://ladyember.com/twilio/recording-status"
         timeout="10"
     />
     <Gather action="/twilio/menu" method="POST" numDigits="1" timeout="30">
