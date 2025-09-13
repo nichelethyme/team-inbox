@@ -978,8 +978,9 @@ def upload_to_s3(file_url, filename):
         print(f"📥 Attempting to download from Twilio: {file_url}")
 
         # Download file from Twilio with authentication
+        import urllib.request
         import urllib.parse
-        from urllib.request import HTTPPasswordMgrWithDefaultRealm, HTTPBasicAuthHandler, build_opener
+        import ssl
 
         # Extract credentials
         twilio_account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
@@ -989,19 +990,30 @@ def upload_to_s3(file_url, filename):
             print("❌ Missing Twilio credentials")
             return None
 
+        # Create SSL context for HTTPS
+        ssl_context = ssl.create_default_context()
+
         # Create authentication handler for Twilio
-        password_mgr = HTTPPasswordMgrWithDefaultRealm()
+        password_mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
         password_mgr.add_password(None, "https://api.twilio.com", twilio_account_sid, twilio_auth_token)
-        auth_handler = HTTPBasicAuthHandler(password_mgr)
-        opener = build_opener(auth_handler)
+        auth_handler = urllib.request.HTTPBasicAuthHandler(password_mgr)
+        https_handler = urllib.request.HTTPSHandler(context=ssl_context)
+        opener = urllib.request.build_opener(auth_handler, https_handler)
+
+        print(f"🔐 Attempting authenticated download from: {file_url[:80]}...")
 
         # Download the file
         try:
-            response = opener.open(file_url, timeout=30)
+            response = opener.open(file_url, timeout=45)
+            content_type = response.headers.get('Content-Type', 'unknown')
             file_data = response.read()
-            print(f"✅ Downloaded {len(file_data)} bytes from Twilio")
+            print(f"✅ Downloaded {len(file_data)} bytes from Twilio (type: {content_type})")
+
+            if len(file_data) < 1000:
+                print(f"⚠️  WARNING: File seems too small for audio: {len(file_data)} bytes")
+
         except Exception as download_error:
-            print(f"❌ Twilio download failed: {download_error}")
+            print(f"❌ Twilio download failed: {type(download_error).__name__}: {download_error}")
             return None
 
         # Create S3 key with folder structure: recordings/YYYY-MM-DD/filename
