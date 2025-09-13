@@ -973,8 +973,23 @@ def upload_to_s3(file_url, filename):
         return signed_url
 
     except Exception as e:
-        print(f"❌ S3 upload error: {e}")
+        error_msg = f"S3 upload error: {type(e).__name__}: {str(e)}"
+        print(f"❌ {error_msg}")
         traceback.print_exc()
+
+        # Save error to database for debugging
+        try:
+            conn = sqlite3.connect('songs.db')
+            c = conn.cursor()
+            c.execute("""INSERT INTO inbox
+                         (sender_name, sender_phone, content_type, title, content, s3_url, date_folder)
+                         VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                      ("System", "DEBUG", "error", "S3 Upload Error", error_msg, None, datetime.now().strftime('%Y-%m-%d')))
+            conn.commit()
+            conn.close()
+        except:
+            pass  # Don't let debug logging break the main flow
+
         return None
 
 def detect_sender_name(phone_number):
