@@ -407,7 +407,12 @@ TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
 AWS_BUCKET_NAME = os.environ.get('AWS_BUCKET_NAME', 'ladyembersongs-recordings')
 
 # S3 client
-s3_client = boto3.client('s3')
+s3_client = boto3.client(
+    's3',
+    aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
+    aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
+    region_name=os.environ.get('AWS_REGION', 'us-east-1')
+)
 
 def upload_to_s3(file_url, filename):
     """Download recording from Twilio and upload to S3"""
@@ -415,7 +420,7 @@ def upload_to_s3(file_url, filename):
         # Download from Twilio
         with urllib.request.urlopen(file_url) as response:
             audio_data = response.read()
-        
+
         # Upload to S3
         s3_key = f"recordings/{datetime.now().strftime('%Y/%m/%d')}/{filename}"
         s3_client.put_object(
@@ -424,10 +429,14 @@ def upload_to_s3(file_url, filename):
             Body=audio_data,
             ContentType='audio/wav'
         )
-        
-        return f"https://{AWS_BUCKET_NAME}.s3.amazonaws.com/{s3_key}"
+
+        s3_url = f"https://{AWS_BUCKET_NAME}.s3.amazonaws.com/{s3_key}"
+        print(f"✅ Uploaded to S3: {s3_url}")
+        return s3_url
+
     except Exception as e:
-        print(f"S3 upload error: {e}")
+        print(f"❌ S3 upload error: {e}")
+        traceback.print_exc()
         return None
 
 @app.route('/twilio/voice', methods=['POST'])
