@@ -123,11 +123,26 @@ def auto_import_desktop_files():
         import os
         import glob
 
+        # Check if we have AWS credentials first
+        aws_access_key = os.environ.get('AWS_ACCESS_KEY_ID')
+        aws_secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
+        aws_bucket = os.environ.get('AWS_BUCKET_NAME')
+
+        if not all([aws_access_key, aws_secret_key, aws_bucket]):
+            print("⚠️  Skipping auto-import: Missing AWS credentials")
+            return
+
         desktop_patterns = [
             '/Users/asiamurray/Desktop/*.mp3',
             '/Users/asiamurray/Desktop/*.wav',
             '/Users/asiamurray/Desktop/*.m4a'
         ]
+
+        # Check if desktop path exists
+        desktop_path = '/Users/asiamurray/Desktop'
+        if not os.path.exists(desktop_path):
+            print("ℹ️  Desktop path not found, skipping auto-import")
+            return
 
         conn = sqlite3.connect('songs.db')
         c = conn.cursor()
@@ -137,6 +152,7 @@ def auto_import_desktop_files():
         existing = {row[0] for row in c.fetchall()}
 
         imported = 0
+        errors = 0
         for pattern in desktop_patterns:
             for file_path in glob.glob(pattern):
                 filename = os.path.basename(file_path)
@@ -149,45 +165,57 @@ def auto_import_desktop_files():
                     with open(file_path, 'rb') as f:
                         file_data = f.read()
 
-                    # Upload to S3
-                    s3_client = boto3.client(
-                        's3',
-                        aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
-                        aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
-                        region_name=os.environ.get('AWS_REGION', 'us-east-1')
-                    )
+                    # Upload to S3 with error handling
+                    try:
+                        s3_client = boto3.client(
+                            's3',
+                            aws_access_key_id=aws_access_key,
+                            aws_secret_access_key=aws_secret_key,
+                            region_name=os.environ.get('AWS_REGION', 'us-east-1')
+                        )
 
-                    date_folder = datetime.now().strftime('%Y-%m-%d')
-                    s3_key = f"recordings/{date_folder}/desktop_{filename}"
+                        date_folder = datetime.now().strftime('%Y-%m-%d')
+                        s3_key = f"recordings/{date_folder}/desktop_{filename}"
 
-                    s3_client.put_object(
-                        Bucket=os.environ.get('AWS_BUCKET_NAME'),
-                        Key=s3_key,
-                        Body=file_data,
-                        ContentType='audio/mpeg' if filename.endswith('.mp3') else 'audio/wav'
-                    )
+                        s3_client.put_object(
+                            Bucket=aws_bucket,
+                            Key=s3_key,
+                            Body=file_data,
+                            ContentType='audio/mpeg' if filename.endswith('.mp3') else 'audio/wav'
+                        )
 
-                    signed_url = s3_client.generate_presigned_url(
-                        'get_object',
-                        Params={'Bucket': os.environ.get('AWS_BUCKET_NAME'), 'Key': s3_key},
-                        ExpiresIn=3600
-                    )
+                        signed_url = s3_client.generate_presigned_url(
+                            'get_object',
+                            Params={'Bucket': aws_bucket, 'Key': s3_key},
+                            ExpiresIn=3600
+                        )
 
-                    # Add to inbox
-                    c.execute("""INSERT INTO inbox
-                                 (sender_name, sender_phone, content_type, title, content, s3_url, date_folder)
-                                 VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                              ('Desktop Import', 'LOCAL', 'voice', content_key, content_key, signed_url, date_folder))
+                        # Add to inbox
+                        c.execute("""INSERT INTO inbox
+                                     (sender_name, sender_phone, content_type, title, content, s3_url, date_folder)
+                                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                                  ('Desktop Import', 'LOCAL', 'voice', content_key, content_key, signed_url, date_folder))
 
-                    imported += 1
-                    print(f"✅ Auto-imported: {filename}")
+                        imported += 1
+                        print(f"✅ Auto-imported: {filename}")
+
+                    except Exception as s3_error:
+                        # If S3 fails, still add to inbox without S3 URL
+                        print(f"⚠️  S3 upload failed for {filename}, adding to inbox anyway: {s3_error}")
+                        c.execute("""INSERT INTO inbox
+                                     (sender_name, sender_phone, content_type, title, content, s3_url, date_folder)
+                                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                                  ('Desktop Import', 'LOCAL', 'voice', content_key,
+                                   f"Desktop file: {filename} (S3 upload failed)", None, datetime.now().strftime('%Y-%m-%d')))
+                        imported += 1
 
                 except Exception as e:
                     print(f"❌ Import failed {filename}: {e}")
+                    errors += 1
 
         if imported:
             conn.commit()
-            print(f"📁 Auto-imported {imported} desktop files")
+            print(f"📁 Auto-imported {imported} desktop files ({errors} errors)")
         conn.close()
 
     except Exception as e:
@@ -1798,6 +1826,56 @@ def detect_sender_name(phone_number):
 
     # Default to last 4 digits if unknown
     return f"User-{clean_phone[-4:]}"
+
+@app.route('/api/projects', methods=['GET'])
+def api_get_projects():
+    """Get all projects for the projects tab"""
+    try:
+        conn = sqlite3.connect('songs.db')
+        c = conn.cursor()
+        c.execute('''SELECT id, name, notes, lyrics, track_count, created_at, updated_at
+                     FROM projects
+                     ORDER BY updated_at DESC''')
+        projects = []
+        for row in c.fetchall():
+            projects.append({
+                'id': row[0],
+                'name': row[1],
+                'notes': row[2] or '',
+                'lyrics': row[3] or '',
+                'track_count': row[4] or 0,
+                'created_at': row[5],
+                'updated_at': row[6]
+            })
+        conn.close()
+        return jsonify({'success': True, 'projects': projects})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/phrases', methods=['GET'])
+def api_get_phrases():
+    """Get all phrases for the phrases tab"""
+    try:
+        conn = sqlite3.connect('songs.db')
+        c = conn.cursor()
+        c.execute('''SELECT id, title, content, s3_url, duration, created_at
+                     FROM phrases
+                     ORDER BY created_at DESC''')
+        phrases = []
+        for row in c.fetchall():
+            phrases.append({
+                'id': row[0],
+                'title': row[1],
+                'content': row[2] or '',
+                's3_url': row[3],
+                'duration': row[4] or '0:15',
+                'created_at': row[5]
+            })
+        conn.close()
+        return jsonify({'success': True, 'phrases': phrases})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
 
 @app.route('/api/fix-missing-recording', methods=['POST'])
 def fix_missing_recording():
