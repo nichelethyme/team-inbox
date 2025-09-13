@@ -24,23 +24,34 @@ os.makedirs('static/spliced', exist_ok=True)
 def init_db():
     conn = sqlite3.connect('songs.db')
     c = conn.cursor()
-    
-    # Only create table if it doesn't exist (don't drop existing data)
-    # c.execute("DROP TABLE IF EXISTS songs")  # REMOVED for production safety
-    
+
+    # Create songs table
     c.execute('''CREATE TABLE IF NOT EXISTS songs
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                  title TEXT, 
-                  lyrics TEXT, 
-                  notes TEXT, 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  title TEXT,
+                  lyrics TEXT,
+                  notes TEXT,
                   audio_files TEXT,
                   voice_notes TEXT,
                   spliced_file TEXT,
                   source TEXT,
                   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+
+    # Create inbox table for team messages
+    c.execute('''CREATE TABLE IF NOT EXISTS inbox
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  sender_name TEXT,
+                  sender_phone TEXT,
+                  content_type TEXT,
+                  title TEXT,
+                  content TEXT,
+                  s3_url TEXT,
+                  date_folder TEXT,
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+
     conn.commit()
     conn.close()
-    print("Database initialized with correct schema")
+    print("Database initialized with songs and inbox tables")
 
 @app.route('/')
 def index():
@@ -350,6 +361,20 @@ def get_inbox():
         traceback.print_exc()
         return jsonify({'inbox': {}})
 
+@app.route('/api/inbox/<int:item_id>', methods=['DELETE'])
+def delete_inbox_item(item_id):
+    """Delete an item from the inbox"""
+    try:
+        conn = sqlite3.connect('songs.db')
+        c = conn.cursor()
+        c.execute("DELETE FROM inbox WHERE id=?", (item_id,))
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True})
+    except Exception as e:
+        print(f"Delete error: {e}")
+        return jsonify({'success': False, 'error': str(e)})
+
 @app.route('/api/debug_song/<int:song_id>')
 def debug_song(song_id):
     """Debug endpoint to see what's actually saved"""
@@ -573,18 +598,6 @@ def handle_sms():
             # Save to database with sender info
             conn = sqlite3.connect('songs.db')
             c = conn.cursor()
-
-            # Add sender and date fields to database
-            c.execute("""CREATE TABLE IF NOT EXISTS inbox
-                         (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                          sender_name TEXT,
-                          sender_phone TEXT,
-                          content_type TEXT,
-                          title TEXT,
-                          content TEXT,
-                          s3_url TEXT,
-                          date_folder TEXT,
-                          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
 
             c.execute("""INSERT INTO inbox
                          (sender_name, sender_phone, content_type, title, content, date_folder)

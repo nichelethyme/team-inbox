@@ -152,8 +152,22 @@ function playAudio(url) {
 
 function deleteItem(id) {
     if (confirm('Delete this item permanently?')) {
-        // TODO: Add delete API endpoint
-        alert(`Delete item ${id} - implement API endpoint`);
+        fetch(`/api/inbox/${id}`, {
+            method: 'DELETE'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Item deleted!');
+                loadInbox(); // Refresh the inbox
+            } else {
+                alert('Failed to delete: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(error => {
+            console.error('Delete error:', error);
+            alert('Delete failed. Please try again.');
+        });
     }
 }
 
