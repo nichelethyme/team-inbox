@@ -17,6 +17,9 @@ app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max
 
+# Global variable to store last error for voice feedback
+last_download_error = None
+
 # Create directories
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs('static/spliced', exist_ok=True)
@@ -592,17 +595,22 @@ def handle_recording():
                 # Update record with failure info
                 conn = sqlite3.connect('songs.db')
                 c = conn.cursor()
+
+                # Include the actual error in the database
+                error_detail = f"S3 upload failed. Error: {last_download_error if last_download_error else 'Unknown error'}"
+
                 c.execute("""UPDATE inbox
                              SET title = ?, content = ?
                              WHERE id = ?""",
-                          (f"{sender_name} - Upload Failed", f"Recording received but S3 upload failed (duration: {recording_duration}s)", webhook_record_id))
+                          (f"{sender_name} - Upload Failed", error_detail, webhook_record_id))
                 conn.commit()
                 conn.close()
 
-                # Return error TwiML
-                error_response = '''<?xml version="1.0" encoding="UTF-8"?>
+                # Return error TwiML with actual error spoken
+                error_to_speak = last_download_error if last_download_error else "Unknown error occurred"
+                error_response = f'''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice">Sorry, there was an error saving your recording. Goodbye.</Say>
+    <Say voice="alice">Sorry, upload failed. Error: {error_to_speak}. Goodbye.</Say>
     <Hangup/>
 </Response>'''
                 return error_response, 200, {'Content-Type': 'application/xml'}
@@ -1013,7 +1021,12 @@ def upload_to_s3(file_url, filename):
                 print(f"⚠️  WARNING: File seems too small for audio: {len(file_data)} bytes")
 
         except Exception as download_error:
-            print(f"❌ Twilio download failed: {type(download_error).__name__}: {download_error}")
+            error_msg = f"{type(download_error).__name__}: {str(download_error)}"
+            print(f"❌ Twilio download failed: {error_msg}")
+
+            # Save error for voice feedback
+            global last_download_error
+            last_download_error = error_msg
             return None
 
         # Create S3 key with folder structure: recordings/YYYY-MM-DD/filename
