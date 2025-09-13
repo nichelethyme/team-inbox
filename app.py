@@ -525,7 +525,7 @@ def handle_incoming_call():
     # System is ready - proceed with recording
     twiml_response = '''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice">System ready! Record your message after the beep. Press 1 when done.</Say>
+    <Say voice="alice">Welcome to Lady Ember Studio - where inspiration becomes art. Record your creative spark after the beep. Press star when done.</Say>
     <Record
         action="https://ladyember.com/twilio/recording"
         method="POST"
@@ -533,11 +533,11 @@ def handle_incoming_call():
         playBeep="true"
         recordingStatusCallback="https://ladyember.com/twilio/recording-status"
         timeout="30"
-        finishOnKey="1"
+        finishOnKey="*"
     />
-    <Say voice="alice">Processing your recording, please wait...</Say>
+    <Say voice="alice">Capturing your creativity... standby for magic.</Say>
     <Pause length="3"/>
-    <Say voice="alice">I didn't get your recording. Please call back and try again. Goodbye!</Say>
+    <Say voice="alice">Your inspiration has been preserved. Create something beautiful!</Say>
     <Hangup/>
 </Response>'''
     
@@ -593,7 +593,7 @@ def handle_recording():
             # Return helpful TwiML
             helpful_response = '''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice">Recording was too short. Please call back and speak for at least 3 seconds after the beep, then press 1. Goodbye.</Say>
+    <Say voice="alice">Your creative moment was too brief to capture. Call back, speak your inspiration after the beep, then press star. Create fearlessly!</Say>
     <Hangup/>
 </Response>'''
             return helpful_response, 200, {'Content-Type': 'application/xml'}
