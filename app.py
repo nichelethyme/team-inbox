@@ -630,7 +630,7 @@ def handle_recording():
                 # Return confirmation TwiML
                 confirmation = '''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice">Recording saved successfully! Goodbye.</Say>
+    <Say voice="alice">Recording received and saved successfully! You can view it on the website. Goodbye.</Say>
     <Hangup/>
 </Response>'''
                 return confirmation, 200, {'Content-Type': 'application/xml'}
@@ -1057,8 +1057,8 @@ def upload_to_s3(file_url, filename):
         print(f"🔐 Attempting authenticated download from: {file_url[:80]}...")
 
         # Download the file with retry for 404 errors (timing issue)
-        max_retries = 3
-        retry_delay = 2  # seconds
+        max_retries = 5  # More generous retry count
+        retry_delay = 3  # Start with longer delay
 
         for attempt in range(max_retries):
             try:
