@@ -375,6 +375,36 @@ def delete_inbox_item(item_id):
         print(f"Delete error: {e}")
         return jsonify({'success': False, 'error': str(e)})
 
+@app.route('/api/refresh-url/<int:item_id>')
+def refresh_url(item_id):
+    """Generate a fresh signed URL for an S3 item"""
+    try:
+        conn = sqlite3.connect('songs.db')
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        c.execute("SELECT * FROM inbox WHERE id=?", (item_id,))
+        item = c.fetchone()
+
+        if item and item['s3_url']:
+            # Extract S3 key from the stored URL
+            import urllib.parse
+            parsed = urllib.parse.urlparse(item['s3_url'])
+            s3_key = parsed.path.lstrip('/')
+
+            # Generate new signed URL
+            new_url = s3_client.generate_presigned_url(
+                'get_object',
+                Params={'Bucket': AWS_BUCKET_NAME, 'Key': s3_key},
+                ExpiresIn=86400  # 24 hours
+            )
+
+            return jsonify({'success': True, 'url': new_url})
+
+        return jsonify({'success': False, 'error': 'Item not found'})
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
 @app.route('/api/test-aws')
 def test_aws():
     """Test AWS S3 connection"""
@@ -458,8 +488,13 @@ def upload_to_s3(file_url, filename):
             ContentType='audio/wav'
         )
 
-        s3_url = f"https://{AWS_BUCKET_NAME}.s3.amazonaws.com/{s3_key}"
-        print(f"✅ Uploaded to S3: {s3_url}")
+        # Generate a signed URL that expires in 24 hours (private bucket)
+        s3_url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': AWS_BUCKET_NAME, 'Key': s3_key},
+            ExpiresIn=86400  # 24 hours
+        )
+        print(f"✅ Uploaded to S3: {s3_key}")
         return s3_url
 
     except Exception as e:
