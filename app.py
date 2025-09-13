@@ -1090,31 +1090,42 @@ def upload_to_s3(file_url, filename):
                     # Final attempt failed or non-404 error
                     raise http_error
             except Exception as download_error:
-                # Other non-HTTP errors
-                raise download_error
+                # Other non-HTTP errors - final attempt
+                if attempt == max_retries - 1:
+                    # This was the last attempt, handle the error
+                    error_msg = f"{type(download_error).__name__}: {str(download_error)}"
+                    print(f"❌ Twilio download failed after {max_retries} attempts: {error_msg}")
 
-        # If we get here, all retries failed
-        except Exception as download_error:
-            error_msg = f"{type(download_error).__name__}: {str(download_error)}"
-            print(f"❌ Twilio download failed after {max_retries} attempts: {error_msg}")
+                    # Set the global error variable
+                    last_download_error = error_msg
 
-            # Set the global error variable
-            last_download_error = error_msg
+                    # Store error and return None
+                    raise download_error
+                else:
+                    # Not the last attempt, retry
+                    raise download_error
 
-            # Store error in database for cross-process access
-            try:
-                conn = sqlite3.connect('songs.db')
-                c = conn.cursor()
-                c.execute("""INSERT OR REPLACE INTO inbox
-                             (id, sender_name, sender_phone, content_type, title, content, s3_url, date_folder)
-                             VALUES (99999, 'SYSTEM', 'ERROR', 'error', 'Last Error', ?, NULL, ?)""",
-                          (error_msg, datetime.now().strftime('%Y-%m-%d')))
-                conn.commit()
-                conn.close()
-            except:
-                pass
+    except Exception as download_error:
+        error_msg = f"{type(download_error).__name__}: {str(download_error)}"
+        print(f"❌ Twilio download failed: {error_msg}")
 
-            return None
+        # Set the global error variable
+        last_download_error = error_msg
+
+        # Store error in database for cross-process access
+        try:
+            conn = sqlite3.connect('songs.db')
+            c = conn.cursor()
+            c.execute("""INSERT OR REPLACE INTO inbox
+                         (id, sender_name, sender_phone, content_type, title, content, s3_url, date_folder)
+                         VALUES (99999, 'SYSTEM', 'ERROR', 'error', 'Last Error', ?, NULL, ?)""",
+                      (error_msg, datetime.now().strftime('%Y-%m-%d')))
+            conn.commit()
+            conn.close()
+        except:
+            pass
+
+        return None
 
         # Create S3 key with folder structure: recordings/YYYY-MM-DD/filename
         date_folder = datetime.now().strftime('%Y-%m-%d')
