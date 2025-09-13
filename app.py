@@ -479,43 +479,6 @@ s3_client = boto3.client(
     region_name=os.environ.get('AWS_REGION', 'us-east-1')
 )
 
-def upload_to_s3(file_url, filename):
-    """Download recording from Twilio and upload to S3"""
-    try:
-        # Create authenticated request for Twilio recording
-        import base64
-        auth_string = f"{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}"
-        base64_auth = base64.b64encode(auth_string.encode()).decode()
-
-        request = urllib.request.Request(file_url)
-        request.add_header("Authorization", f"Basic {base64_auth}")
-
-        # Download from Twilio with authentication
-        with urllib.request.urlopen(request) as response:
-            audio_data = response.read()
-
-        # Upload to S3
-        s3_key = f"recordings/{datetime.now().strftime('%Y/%m/%d')}/{filename}"
-        s3_client.put_object(
-            Bucket=AWS_BUCKET_NAME,
-            Key=s3_key,
-            Body=audio_data,
-            ContentType='audio/wav'
-        )
-
-        # Generate a signed URL that expires in 24 hours (private bucket)
-        s3_url = s3_client.generate_presigned_url(
-            'get_object',
-            Params={'Bucket': AWS_BUCKET_NAME, 'Key': s3_key},
-            ExpiresIn=86400  # 24 hours
-        )
-        print(f"✅ Uploaded to S3: {s3_key}")
-        return s3_url
-
-    except Exception as e:
-        print(f"❌ S3 upload error: {e}")
-        traceback.print_exc()
-        return None
 
 @app.route('/twilio/voice', methods=['POST'])
 def handle_incoming_call():
@@ -584,7 +547,7 @@ def handle_recording():
 </Response>'''
             return helpful_response, 200, {'Content-Type': 'application/xml'}
 
-        if recording_url and recording_sid:
+        elif recording_url and recording_sid:
             print(f"✅ Both URL and SID exist - proceeding with upload")
             filename = f"call_recording_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
 
@@ -631,20 +594,16 @@ def handle_recording():
 </Response>'''
                 return error_response, 200, {'Content-Type': 'application/xml'}
 
-        # This should never be reached if logic above is correct
-        print("⚠️  UNEXPECTED: Reached end of function - this shouldn't happen!")
-        print(f"Debug - recording_url: '{recording_url}'")
-        print(f"Debug - recording_sid: '{recording_sid}'")
-        print(f"Debug - has URL: {bool(recording_url)}")
-        print(f"Debug - has SID: {bool(recording_sid)}")
+        else:
+            # Case where there's a URL but no SID (unusual but possible)
+            print(f"⚠️  Unusual case: recording_url='{recording_url}', recording_sid='{recording_sid}'")
 
-        # If no recording URL, just hang up
-        hangup = '''<?xml version="1.0" encoding="UTF-8"?>
+            hangup = '''<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice">No recording received. Goodbye.</Say>
+    <Say voice="alice">Recording incomplete. Goodbye.</Say>
     <Hangup/>
 </Response>'''
-        return hangup, 200, {'Content-Type': 'application/xml'}
+            return hangup, 200, {'Content-Type': 'application/xml'}
 
     except Exception as e:
         print(f"Recording error: {e}")
