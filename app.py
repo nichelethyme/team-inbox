@@ -684,60 +684,7 @@ def handle_menu():
     
     return twiml_response, 200, {'Content-Type': 'application/xml'}
 
-@app.route('/twilio/recording', methods=['POST'])
-def handle_recording():
-    """Handle completed recordings"""
-    try:
-        recording_url = request.values.get('RecordingUrl', '')
-        recording_sid = request.values.get('RecordingSid', '')
-        from_number = request.values.get('From', '')
-        call_sid = request.values.get('CallSid', '')
-        
-        if not recording_url:
-            return "No recording URL", 400
-        
-        # Generate filename
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f"voice_note_{timestamp}_{recording_sid}.wav"
-        
-        # Upload to S3 
-        s3_url = upload_to_s3(recording_url, filename)
-        
-        if s3_url:
-            # Detect sender and organize by date
-            sender_name = detect_sender_name(from_number)
-            date_folder = datetime.now().strftime('%Y-%m-%d')
-            title = f"{sender_name} - Voice {datetime.now().strftime('%H:%M')}"
 
-            # Save to inbox system
-            conn = sqlite3.connect('songs.db')
-            c = conn.cursor()
-
-            c.execute("""INSERT INTO inbox
-                         (sender_name, sender_phone, content_type, title, content, s3_url, date_folder)
-                         VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                      (sender_name, from_number, 'voice', title, f"Voice recording - {filename}", s3_url, date_folder))
-
-            conn.commit()
-            conn.close()
-
-            print(f"🎤 Voice recording from {sender_name}: {filename} -> {s3_url}")
-        
-        return "Recording processed", 200
-        
-    except Exception as e:
-        print(f"Recording error: {e}")
-        traceback.print_exc()
-        return "Error processing recording", 500
-
-@app.route('/twilio/recording-status', methods=['POST'])
-def handle_recording_status():
-    """Handle recording status updates"""
-    status = request.values.get('RecordingStatus', '')
-    recording_sid = request.values.get('RecordingSid', '')
-    
-    print(f"Recording {recording_sid} status: {status}")
-    return "OK", 200
 
 @app.route('/twilio/sms', methods=['POST'])
 def handle_sms():
@@ -820,6 +767,77 @@ def handle_sms():
         print(f"SMS/MMS error: {e}")
         traceback.print_exc()
         return "Error processing message", 500
+
+def upload_to_s3(file_url, filename):
+    """Upload a file from URL to S3 bucket with proper authentication"""
+    try:
+        # Get AWS credentials from environment
+        aws_access_key = os.environ.get('AWS_ACCESS_KEY_ID')
+        aws_secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
+        aws_bucket = os.environ.get('AWS_BUCKET_NAME')
+        aws_region = os.environ.get('AWS_REGION', 'us-east-1')
+
+        if not all([aws_access_key, aws_secret_key, aws_bucket]):
+            print("❌ Missing AWS credentials")
+            return None
+
+        # Create S3 client
+        s3_client = boto3.client(
+            's3',
+            aws_access_key_id=aws_access_key,
+            aws_secret_access_key=aws_secret_key,
+            region_name=aws_region
+        )
+
+        # Create authenticated request for Twilio recording
+        import base64
+        twilio_account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
+        twilio_auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
+
+        if not all([twilio_account_sid, twilio_auth_token]):
+            print("❌ Missing Twilio credentials")
+            return None
+
+        auth_string = f"{twilio_account_sid}:{twilio_auth_token}"
+        base64_auth = base64.b64encode(auth_string.encode()).decode()
+
+        request = urllib.request.Request(file_url)
+        request.add_header("Authorization", f"Basic {base64_auth}")
+
+        print(f"📥 Downloading from Twilio: {file_url}")
+
+        # Download file from Twilio
+        with urllib.request.urlopen(request) as response:
+            file_data = response.read()
+            print(f"✅ Downloaded {len(file_data)} bytes")
+
+        # Create S3 key with folder structure: recordings/YYYY-MM-DD/filename
+        date_folder = datetime.now().strftime('%Y-%m-%d')
+        s3_key = f"recordings/{date_folder}/{filename}"
+
+        # Upload to S3
+        print(f"📤 Uploading to S3: s3://{aws_bucket}/{s3_key}")
+        s3_client.put_object(
+            Bucket=aws_bucket,
+            Key=s3_key,
+            Body=file_data,
+            ContentType='audio/wav'
+        )
+
+        # Generate signed URL for private access (expires in 1 hour)
+        signed_url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': aws_bucket, 'Key': s3_key},
+            ExpiresIn=3600  # 1 hour
+        )
+
+        print(f"✅ Successfully uploaded to S3: {s3_key}")
+        return signed_url
+
+    except Exception as e:
+        print(f"❌ S3 upload error: {e}")
+        traceback.print_exc()
+        return None
 
 def detect_sender_name(phone_number):
     """Detect sender name from phone number - you can customize this"""
