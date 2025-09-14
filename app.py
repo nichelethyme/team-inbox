@@ -1341,8 +1341,26 @@ def import_s3_zip():
 
         # Download zip to temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as temp_zip:
-            print(f"📥 Downloading {zip_key} from S3...")
-            s3_client.download_fileobj(aws_bucket, zip_key, temp_zip)
+            print(f"📥 Downloading {zip_key} from S3 bucket {aws_bucket}...")
+            try:
+                s3_client.download_fileobj(aws_bucket, zip_key, temp_zip)
+                print(f"✅ Successfully downloaded {zip_key}")
+            except ClientError as e:
+                error_code = e.response['Error']['Code']
+                if error_code == 'NoSuchKey':
+                    return jsonify({
+                        'success': False,
+                        'error': f'File not found in S3: {zip_key}',
+                        'available_files': 'Use /api/debug-aws to check bucket contents'
+                    })
+                elif error_code == 'NoSuchBucket':
+                    return jsonify({
+                        'success': False,
+                        'error': f'Bucket not found: {aws_bucket}',
+                        'debug': 'Check AWS credentials and bucket name'
+                    })
+                else:
+                    raise e
             temp_zip_path = temp_zip.name
 
         imported_count = 0
@@ -1876,6 +1894,71 @@ def api_get_phrases():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
+
+@app.route('/api/debug-aws', methods=['GET'])
+def debug_aws():
+    """Debug AWS S3 configuration and connectivity"""
+    try:
+        # Get environment variables
+        aws_access_key = os.environ.get('AWS_ACCESS_KEY_ID')
+        aws_secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
+        aws_bucket = os.environ.get('AWS_BUCKET_NAME')
+        aws_region = os.environ.get('AWS_REGION', 'us-east-1')
+
+        debug_info = {
+            'has_access_key': bool(aws_access_key),
+            'has_secret_key': bool(aws_secret_key),
+            'bucket_name': aws_bucket,
+            'region': aws_region,
+            'access_key_prefix': aws_access_key[:8] + '...' if aws_access_key else None,
+        }
+
+        if not all([aws_access_key, aws_secret_key, aws_bucket]):
+            return jsonify({
+                'success': False,
+                'error': 'Missing AWS credentials',
+                'debug': debug_info
+            })
+
+        # Test S3 connection
+        s3_client = boto3.client(
+            's3',
+            aws_access_key_id=aws_access_key,
+            aws_secret_access_key=aws_secret_key,
+            region_name=aws_region
+        )
+
+        # Try to head the bucket (check if it exists and we have access)
+        try:
+            response = s3_client.head_bucket(Bucket=aws_bucket)
+            debug_info['bucket_exists'] = True
+            debug_info['bucket_region'] = response.get('ResponseMetadata', {}).get('HTTPHeaders', {}).get('x-amz-bucket-region', 'unknown')
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            debug_info['bucket_exists'] = False
+            debug_info['bucket_error'] = error_code
+            debug_info['bucket_error_message'] = str(e)
+
+        # Try to list objects (test permissions)
+        try:
+            response = s3_client.list_objects_v2(Bucket=aws_bucket, MaxKeys=1)
+            debug_info['can_list_objects'] = True
+            debug_info['object_count'] = response.get('KeyCount', 0)
+        except ClientError as e:
+            debug_info['can_list_objects'] = False
+            debug_info['list_error'] = str(e)
+
+        return jsonify({
+            'success': True,
+            'debug': debug_info
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'error_type': type(e).__name__
+        })
 
 @app.route('/api/fix-missing-recording', methods=['POST'])
 def fix_missing_recording():
